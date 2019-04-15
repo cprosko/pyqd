@@ -42,19 +42,19 @@ class DotSystem:
     ndotssc: number of superconducting type dots
     _quasidots: 
     """
-    def __init__(self, print = True):
+    def __init__(self, verbose = True):
         """
         Constructor for DotSystem class.
 
         Parameters:
         print (bool): whether or not to print results of calling methods
         """
-        self.dots = {}      # Dictionary of dots & their parameters
-        self.couplings = {} # Dictionary of couplings/capacitances between dots
-        self.leads = {}     # Dictionary of leads and which dots they attach to
-        self.sys = []       # List of dictionaries of state info for each quantum state of system.
-        self._indices = []  # Dictionary which provides index for each dot/lead name, ordering them.
-        self.print = print  # Suppresses printing function results if False
+        self.dots = {}          # Dictionary of dots & their parameters
+        self.couplings = {}     # Dictionary of couplings/capacitances between dots
+        self.leads = {}         # Dictionary of leads and which dots they attach to
+        self.sys = []           # List of dictionaries of state info for each quantum state of system.
+        self._indices = []      # Dictionary which provides index for each dot/lead name, ordering them.
+        self.verbose = verbose  # Suppresses printing function results if False
     
     def __str__(self):
         """Print class type and attributes when qdsystem is called with print()."""
@@ -124,7 +124,7 @@ class DotSystem:
             self._indices.append(name)
         else:
             self._indices.extend([name]*self.dots[name]['degeneracy'])
-        if self.print:
+        if self.verbose:
             print("Dot added with name: " + str(name) + ".")
     
     def delete(self, name):
@@ -195,10 +195,10 @@ class DotSystem:
             't': t,
             'name': name # For reverse searching from dict. value
         }
-        if self.print:
+        if self.verbose:
             print("Tunnel coupling and capacitance '" + name + "' added between dots: '" + str(dotnames) + '.')
 
-    def add_lead(self, dots, ts, name=None, level=0):
+    def add_lead(self, dots, t, name=None, level=0):
         """Add a lead to the system.
 
         Models lead as a quantum dot with 0 charging energy and many
@@ -206,7 +206,7 @@ class DotSystem:
 
         Parameters:
         dots (list): Dots (given by string keys) to which lead couples
-        ts (list): Tunnel couplings (t's) to dots, in same order as dots list
+        t (list): Tunnel couplings (t's) to dots, in same order as dots list
         
         Keyword Arguments:
         name (str): Key to access entry for this lead in self.leads
@@ -231,7 +231,7 @@ class DotSystem:
                 't': t[i]
             }
         self._indices.append(name)
-        if self.print:
+        if self.verbose:
             print("Lead with chemical potential " + str(level) + "added which couples to dots: " + str(dots))
 
     def sc_state_ravel(self, dot, state):
@@ -285,6 +285,62 @@ class DotSystem:
         if orb > (1-charge%2)*d[0] + (charge%2)*d[1] - 1:
             raise Exception('Orbital index exceeds number of degenerate states possible!')
         return (charge//2)*(d[0] + d[1]) + (charge%2)*d[0] + orb 
+
+    def dotstates(self,nameOrIndex,N):
+        """List of charge states of dot/lead returned as [nameOrIndex,charge,isSC*orbital].
+
+        Returns all possible states of dot with maximum charge N and minimum charge 0
+        as a list of [nameOrIndex,charge,isSC*orbital] format states. Leads may contain
+        as many as .ndots * N electrons.
+
+        Parameters:
+        nameOrIndex (int or str): Either index of dot/lead in ._indices, or keyword name
+            in .dots or .leads
+        N (int): Maximum number of charges to be allowed on dot
+
+        Returns:
+        list: List of all possible charge/orbital states of dot/lead in where each state is
+            given as a list like [nameOrIndex,charge,isSC*orbital]
+        """
+        if np.isscalar(nameOrIndex):
+            # Name of dot/lead
+            name = self._indices[nameOrIndex]
+            label = self._indices.index(name)
+        elif isinstance(nameOrIndex, str):
+            name = nameOrIndex
+            label = name
+        else:
+            raise Exception('Input must be name keyword of dot/lead, or its index in ._indices.')
+        if name in self.dots:
+            dot = self.dots[name]
+            if dot['isSC']:
+                # Degeneracy of quasiparticle states on SC island
+                deg = dot['degeneracy']
+                # Number of possible SC island states
+                numStates = (N//2)*(1+deg) + (N%2)*deg + 1
+                # List comprehension generating all possible [charge,j,orbital] states
+                return [
+                    [
+                        # Island index in self._indices or dot/lead name
+                        label,
+                        # Island charge 
+                        2*(i // (1 + deg)) + min([(i % (1 + deg)), 1]), 
+                        # 0 if even charge, index of deg. quasiparticle state if odd charge
+                        i % (1 + deg) - min([i % (1 + deg),1]) % 2
+                    ] 
+                    for i in range(numStates)
+                ]
+            else:
+                # If (effectively) a dot, states are just [charge,j,isSC = False]
+                return [[label,i,0] for i in range(N+1)]
+        elif name in self.leads:
+            # If a lead, states are just [charge,j,isSC = False]
+            return [[label,i,0] for i in range(N*self.ndots + 1)]
+        else:
+            raise Exception(
+                "Object with name: " + name + "is in self._indices" 
+                " but is not a defined lead or dot!"
+                )
         
     def system_states(self, N):
         """Generate all possible charge/orbital states for given total charge N.
@@ -303,60 +359,27 @@ class DotSystem:
         def unfixed_states(N):
             """Generates all charge states without a fixed total charge, wherein each
             effective dot may contain up to N electrons, and each lead can contain
-            ALL electrons from each dot."""
-            
-            def dotstates(j):
-                """List of charge states of dot/lead returned as [charge,dotindex,isSC*orbital]."""
-                # Nam of dot/lead
-                name = self._indices[j]
-                if name in self.dots:
-                    dot = self.dots[name]
-                    if dot['isSC']:
-                        # Degeneracy of quasiparticle states on SC island
-                        deg = dot['degeneracy']
-                        # Number of possible SC island states
-                        numStates = (N//2)*(1+deg) + (N%2)*deg
-                        # List comprehension generating all possible [charge,j,orbital] states
-                        return [
-                            [
-                                # Island charge 
-                                2*(i // (1 + deg)) + min([(i % (1 + deg)), 1]), 
-                                # Island index in self._indices
-                                j,
-                                # 0 if even charge, index of deg. quasiparticle state if odd charge
-                                i % (1 + deg) - min([i % (1 + deg),1]) % 2
-                            ] 
-                            for i in range(numStates)
-                        ]
-                    else:
-                        # If (effectively) a dot, states are just [charge,j,isSC = False]
-                        return [[i,j,0] for i in range(N+1)]
-                elif name in self.leads:
-                    # If a lead, states are just [charge,j,isSC = False]
-                    return [[i,j,0] for i in range(N*self.ndots + 1)]
-                else:
-                    raise Exception(
-                        "Object with name: " + name + "is in self._indices" 
-                        " but is not a defined lead or dot!"
-                        )
-                
+            ALL electrons from each dot."""                
             # Take Cartesian product of all possible dot states to obtain a superset of 
             # all possible states, since the totalCharge may not = N.
-            for state in product(*[dotstates(j) for j in range(self._indices)]):
+            for state in product(*[self.dotstates(j,N) for j in range(len(self._indices))]):
                 yield np.array(state)
 
         def is_possible_state(state, N):
-            """Checks if a charge state, given as a tuple, is allowable for fixed total N."""
+            """Checks if a charge state, given as a numpy array, is allowable for fixed total N."""
             # Sum state tuple to find charge
-            totalCharge = state.sum(axis = 0)
+            totalCharge = state[:,1].sum()
             # State is not possible if total charge does not equal N (no leads) or N*self.ndots (leads)
             if (totalCharge != N and self.nleads == 0) or (totalCharge != N*self.ndots and self.nleads != 0):
                 return False
-            # Find index of first occurrence of all degenerate dots in ._indices,
-            # identical to index used in state vec.
-            degIndices = np.array([[i,state[i,0]] for i,n in enumerate(self._indices) if self._indices.count(n) > 1])
-            dotCharges = np.array([state[state[:,1] == i,0] for i in degIndices])
-            return not any([abs(d[0]-d[1]) > 1 for d in combinations(dc,2) for dc in dotCharges])
+            # Find index of 1st occurrence of all degeneracy dots, even those across different 'real' dots
+            degIndices = {self._indices.index(n) for n in self._indices if self._indices.count(n) > 1}
+            # Don't bother checking differences between degenerate dot states if there are no degeneracies
+            if len(degIndices) == 0:
+                return True
+            # Sort degeneracy dot charges by which real dot they belong to
+            dotCharges = [state[state[:,0] == i,1] for i in degIndices]
+            return not any([any([abs(d[0]-d[1]) > 1 for d in combinations(dc,2)]) for dc in dotCharges])
 
         for state in unfixed_states(N):
             if is_possible_state(state, N):
@@ -366,9 +389,9 @@ class DotSystem:
     ### WILL NEED DEBUGGING ###
     def dimension(self, N):
         """Return dimension (int) of Hilbert space for a given number of charges N in the system."""
-        if self.print: ti = time.clock()
+        if self.verbose: ti = time.clock()
         dim = len(list(self.system_states(N)))
-        if self.print:
+        if self.verbose:
             print('Time to generate states was: ' + str(time.clock() - ti) + 's.')
         return dim
 
@@ -506,15 +529,16 @@ FOR TESTING
 
 def main():
     x = 0
-    system = DotSystem(print=True)
+    system = DotSystem(verbose=True)
     #system.add_dot(100,degeneracy=1,orbitals=100,isSC = False)
-    system.add_dot(20,degeneracy=2,orbitals=0,isSC=False)
-    system.add_dot(30,degeneracy=1,orbitals=[3,5,6],isSC=False)
-    system.add_dot(50,name='SCdot2',degeneracy=10,orbitals=200,isSC=True)
+    # system.add_dot(20,degeneracy=2,orbitals=0,isSC=False)
+    # system.add_dot(30,degeneracy=4,orbitals=[3,5,6],isSC=False)
+    system.add_dot(400,name='SCdot',degeneracy=5,orbitals=100,isSC=True)
+    system.add_dot(50,name='SCdot2',degeneracy=4,orbitals=200,isSC=True)
     
     print(system.ndotseff)
     print(system.ndots)
-    N = 2
+    N = 4
     npoints = 101
     print('System dimension is: ' + str(system.dimension(N)))
 
