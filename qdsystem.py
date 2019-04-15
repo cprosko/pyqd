@@ -12,9 +12,6 @@ Work flow of a qdsystem calculation:
     6. Calculate properties of the system using additional functionality to come.
 """
 
-### TO DO:
-### ADD DELETE_DOT FUNCTION
-
 import numpy as np
 import scipy.sparse as sp
 import matplotlib.pyplot as plt
@@ -46,11 +43,10 @@ class DotSystem:
         Parameters:
         print (bool): whether or not to print results of calling methods
         """
-        self.dots = {}          # Dictionary of dots & their parameters
-        self.couplings = {}     # Dictionary of couplings/capacitances between dots
-        self.leads = {}         # Dictionary of leads and which dots they attach to
+        self.objects = {}       # Dictionary of dots and leads and their parameters and couplings
         self.states = {}        # Dictionary of all possible system states, searchable by total charge N
-        self._indices = []      # Dictionary which provides index for each dot/lead name, ordering them.
+        self._sysCurrent = []   # List containing all system information in multi-dimensional list format
+        self._sys = {}          # Dictionary containing properties from ._syscurrent in numpy array format
         self.verbose = verbose  # Suppresses printing function results if False
     
     def __str__(self):
@@ -63,30 +59,25 @@ class DotSystem:
     @property
     def ndots(self):
         """Number of dots in system."""
-        return len(self.dots)
+        return len([v for v in self.objects.values() if not v['isLead']])
 
     @property
     def ndotseff(self):
         """Number of effective dots in system."""
         n = 0
-        for dot in self.dots.values():
+        for dot in [v for v in self.objects.values() if not v['isLead']]:
             n += 1 if dot['isSC'] else dot['degeneracy']
         return n
 
     @property
     def ndotssc(self):
         """Number of superconducting islands in system."""
-        return sum([dot['isSC'] for dot in self.dots.values()])
+        return len([v for v in self.objects.values() if v['isSC']])
 
     @property
     def nleads(self):
         """Number of leads in system."""
-        return len(self.leads)
-
-    @property
-    def ncouplings(self):
-        """Number of tunnel couplings (not incl. those to leads)."""
-        return len(self.couplings)
+        return len([v for v in self.objects.values() if v['isLead']])
 
     def add_dot(self, Ec, name=None, degeneracy=1, orbitals=0, isSC=False):    
         """Add a quantum dot to the system.
@@ -111,22 +102,22 @@ class DotSystem:
                 'orbEnergies must be a scalar for superconducting islands,'
                 + ' as it corresponds to odd parity lowest energy level.')
         if name is None: name = 'dot' + str(self.ndots)
-        if any([name == n for n in {**self.dots, **self.leads}]):
+        if any([name == n for n in self.objects]):
             raise Exception("Dot or lead with name '" + name + "' is already defined.")
-        self.dots[name] = {
+        self.objects[name] = {
             'Ec': Ec,
             'degeneracy': degeneracy,
             'orbitals': orbitals,
             'numCouplings': 0,
             'couplings': {},
             'isSC': isSC,
+            'isLead': False,
             'name': name, # For reverse searching in internal algorithms
             }
-        # Assign an index range to dot so that it can be ordered for later calculations
-        if self.dots[name]['isSC']:
-            self._indices.append(name)
-        else:
-            self._indices.extend([name]*self.dots[name]['degeneracy'])
+        # Add dot to collection of system objects, accounting for degeneracy
+        numEffDots = isSC + (1-isSC)*degeneracy
+        orbs = [orbitals]*degeneracy if isSC else orbitals
+        self._sysTemp.extend([[name,Ec,isSC,orbs]]*numEffDots)
         if self.verbose:
             print("Dot added with name: " + str(name) + ".")
 
@@ -147,32 +138,23 @@ class DotSystem:
         name (str): Optional name associated with coupling, stored in dict. with Em/t
         """
         dns = list(dotnames)
-        if any([name == n for n in self.couplings]):
-            raise Exception("Coupling with name '" + name + "' is already defined.")
         if len(dns) > 2:
             raise Exception('Couplings can only be defined between two dots at a time!')
-        for dot in dns:
-            if dot not in self.dots:
-                raise Exception(dot + ' is not a defined dot!')
-        for c in self.couplings:
-            if all([dn in c['dots'] for dn in dns]):
-                del self.couplings[c]
-                warnings.warn('Coupling already exists between ' + str(dns[0]) + ' and ' + str(dns[1])
-                    + "! Overwriting with new coupling parameters.")
+        if any([dot not in self.dots for dot in dns]):
+            raise Exception(dot + ' is not a defined dot!')
+        if d[0] in self.dots[d[1]]['couplings'] or d[1] in self.dots[d[0]]['couplings']:
+            warnings.warn('Coupling already exists between ' + str(dns[0]) + ' and ' + str(dns[1])
+                + "! Overwriting with new coupling parameters.")
         for i,dot in enumerate(dns):
+            if dns[i-1] in self.dots[dot]['couplings']:
             self.dots[dot]['couplings'].update(
                 {
-                    dns[(i+1)%2]: {'Em': Em, 't': t} #Entry with OTHER dot's name as key
+                    dns[i-1]: {'Em': Em, 't': t} #Entry with OTHER dot's name as key
                 }
             )
-        self.couplings[name] = {
-            'dots': set(dotnames),
-            'Em': Em,
-            't': t,
-            'name': name # For reverse searching from dict. value
-        }
+            self.dots[dot]['numCouplings'] += 1
         if self.verbose:
-            print("Tunnel coupling and capacitance '" + name + "' added between dots: '" + str(dotnames) + '.')
+            print("Tunnel coupling and capacitance added between dots: '" + str(dotnames) + '.')
 
     def add_lead(self, dots, t, name=None, level=0):
         """Add a lead to the system.
@@ -193,50 +175,60 @@ class DotSystem:
         """
         if name == None:
             name = 'lead' + str(self.nleads)
-        if any([name == n for n in {**self.dots, **self.leads}]):
+        if any([name == n for n in self.objects]):
             raise Exception("Lead or dot with name '" + name + "' is already defined.")
-        self.leads[name] = {
+        index = self.ndots + self.nleads
+        self.objects[name] = {
             'couplings': {},
             'level': level,
-            'isSC': False # Must be included for organization of charge states later.
+            'isSC': False, # Must be included for organization of charge states later.
+            'isLead': True,
+            'name': name,
         }
         # Create couplings dict. so 'leads' may be searched like dots
         for i,dot in enumerate(dots):
-            self.leads[name]['couplings'][dot] = {
-                'Em': 0,
-                't': t[i]
-            }
-        self._indices.append(name)
+            c = {'Em': 0, 't': t[i]}
+            self.objects[name]['couplings'][dot] = c
+            self.objects[dot]['couplings'][name] = c
+        self._sysTemp.append([name,0,False,level,1])
         if self.verbose:
             print("Lead with chemical potential " + str(level) + "added which couples to dots: " + str(dots))
 
-    def delete(self, name):
-        """Delete dot/lead/coupling with 'name' and adjust _indices accordingly."""
+    def delete(self, *names):
+        """Delete dot/lead/coupling with [name].
 
-        def del_coupling(name):
-            """Deletes coupling and removes its corresponding information from self._indices."""
-            ds = list(self.couplings[name]['dots'])
-            # Delete each dot's entry in other dot's coupling list
-            del self.dots[ds[0]]['couplings'][ds[1]]
-            del self.dots[ds[1]]['couplings'][ds[0]]
-            # Delete coupling itself
-            del self.couplings[name]
+        Adjusts ._sysTemp accordingly for deleted dot/lead.
 
-        if name in self.couplings:
-            del_coupling(name)
-            return
-        elif name in self.dots:
-            del self.dots[name]
-        elif name in self.leads:
-            del self.leads[name]
+        Parameters:
+        names (string or tuple of two strings): if string, deletes
+            dot or lead with same name, if tuple of 2 strings, deletes
+            coupling between dots/leads in names.
+        """
+
+        def delete_entry(*names):
+            """Deletes entry 'val' from object 'name' or 'name' itself if val=None."""
+            if len(names) == 2:
+
+        if len(names) == 2:
+            for i,n in enumerate(names):
+                delete_entry(name[i-1],)
+        elif len(names) == 1:
+            name = names[0]
+            if name in self.dots:
+                del self.dots[name]
+            elif name in self.leads:
+                del self.leads[name]
+            else:
+                raise Exception(str(name) + ' must be a defined dot or lead!')
+            for n,v in {**self.dots, **self.leads}:
+                if name in v['couplings']:
+                    if n in self.dots:
+                        del self.dots[n]['couplings'][name]
+                    elif n in self.leads:
+                        del self.leads[n]['couplings']
+                
         else:
-            raise Exception('Dot/lead/coupling with name ' + name + 'does not exist!')
-        for n,c in self.couplings:
-            if name in c['dots']:
-                warnings.warn('Coupling ' + n + 'involves dot/lead ' + name + ' and will be deleted.')
-                del_coupling(c)
-        self._indices.remove(name) # Adjust dot ordering/indexing if dot/lead is being removed
-        self.states = [] # Clear system state list, since it is no longer accurate
+            raise Exception('Arguments must be a string or list of two strings!')
 
     def dotstates(self,nameOrIndex,N):
         """List of charge states of dot/lead returned as [nameOrIndex,charge,isSC*orbital].
@@ -304,11 +296,11 @@ class DotSystem:
             Maximum number of charges per dot.
 
         Yields:
-            numpy.array: Contains state of each dot in same order as in
+        numpy.array: Contains state of each dot in same order as in
             self._indices.
         """
 
-        def unfixed_states(N):
+        def unfixed_states():
             """Generates all charge states without a fixed total charge, wherein each
             effective dot may contain up to N electrons, and each lead can contain
             ALL electrons from each dot."""                
@@ -317,7 +309,7 @@ class DotSystem:
             for state in product(*[self.dotstates(j,N) for j in range(len(self._indices))]):
                 yield np.array(state)
 
-        def is_possible_state(state, N):
+        def is_possible_state(state):
             """Checks if a charge state, given as a numpy array, is allowable for fixed total N."""
             # Sum state tuple to find charge
             totalCharge = state[:,1].sum()
@@ -333,90 +325,88 @@ class DotSystem:
             dotCharges = [state[state[:,0] == i,1] for i in degIndices]
             return not any([any([abs(d[0]-d[1]) > 1 for d in combinations(dc,2)]) for dc in dotCharges])
 
-        for state in unfixed_states(N):
-            if is_possible_state(state, N):
+        for state in unfixed_states():
+            if is_possible_state(state):
                 yield state
     
-
-    ### WILL NEED DEBUGGING ###
     def dimension(self, N):
         """Return dimension (int) of Hilbert space for a given number of charges N in the system."""
         # Generate system states for N total charge if it has not already been calculated.
         if N not in self.states:
-            if self.verbose: ti = time.clock()
-            self.states[N] = list(self.system_states(N))
-            dim = len(list(self.system_states(N)))
+            if self.verbose:
+                ti = time.clock()
+            self.states[N] = np.array(list(self.system_states(N)))
             if self.verbose:
                 print('Time to generate states was: ' + str(time.clock() - ti) + 's.')
         return len(self.states[N])
 
-    def get_hamiltonian(self, N, gates):
-        """Retrieve system Hamiltonian for given maximum charge and current dots/leads.
+    def finalize(self):
+        print('This function is incomplete.')
 
-        Returns a list (matrix) whose first entry in each element is the Hamiltonian matrix
-        element for the dot system with total charge N (or maximum charge N per dot if leads
-        are present) and whose second entry is the involved state(s) given by system_states(N).
-
-        Parameters:
-        N (int): Total charge of all dots in system, or the maximum charge per dot if leads are 
-            present.
-
-        Keyword Arguments:
-        gates: Dictionary containing dot names as keywords and reduced gate voltages as values.
-
-        Returns:
-        ham (np.array): Hamiltonian matrix of the system.
-        states: List of dictionaries of the charge configuration corresponding to each state.
-            Order of list matches the diagonal of ham.
-        """
-
-        if self.nleads > 0:
-            warnings.warn("At least one dot has leads, so N cannot be fixed," 
-                          " and will be interpreted as the maximum charge per dot.")
+    def get_hamiltonian(self, N, gates, storeStates = True):
+        """Retrieve the system Hamiltonian for given total charge N and gate voltages."""
+        if self.nleads > 0 and self.verbose:
+            warnings.warn(
+                "At least one dot has leads, so N cannot be fixed," 
+                " and will be interpreted as the maximum charge per dot."
+                )
         if N not in self.states:
-            self.states[N] = list(self.system_states(N))
-        ham_diag = []  #Initialize Hamiltonian diagonal
-        def onsite(state, gates):
-            """Calculates onsite energy for a given charge configuration of the DotSystem."""
+            self.states[N] = np.array(list(self.system_states(N)))
+        states = self.states[N]
+        indices = np.array(self._indices)
+        dots = self.dots
+        leads = self.leads
 
-            def objindices(name):
-                """Returns list of indices in state corresponding to dot with name."""
-                return [i for i,n in enumerate(state[:,1]) if n == name]
+        # charging energy first:
+        # in each state, pick out only dots
+        dotcharges = states[:,np.isin(indices,self.dots),1]
+        # Find corresponding charging energies:
+        ecs = [dots[name]['Ec'] for 
 
-            ns = {} # Initialize dictionary of charge on each dot
-            stateEnergy = 0 # Initialize energy of state to be returned
-            for dot, name in self.dots.items():
-                indices = objindices(name)
-                charges = np.array([state[i][1] for i in indices])
-                if dot['isSC']:    
-                    stateEnergy += (charges[0]%2)*dot['orbitals']
-                elif np.isscalar(dot['orbitals']):
-                    # If addition energy is the same for every orbital, we need only multiply
-                    # the total dot charge by this orbital energy to calculate total
-                    # non-charging-related energy
-                    stateEnergy += sum(charges)*dot['orbitals']
-                else:
-                    # For multiple orbital energies, 
-                    numFullOrbitals = charges//dot['degeneracy']
-                    orbs = np.array(dot['orbitals'])
-                    # If all orbitals specified in 'orbitals' are full, then higher orbital energy
-                    # are assumed equal to the highest specified orbital energy
-                    if numFullOrbitals > len(orbs):
-                        np.append(orbs, [orbs[-1]]*(numFullOrbitals - len(orbs)))
-                    # Add all orbital energies for each degeneracy quantum number, then sum the result
-                    stateEnergy += sum([sum(orbs[0:subcharge]) for subcharge in charges])
-                # Add charging energy of dot
-                ns.update({name: sum(charges)-gates[name]})
-                stateEnergy += dot['Ec']*ns[name]**2
-            # Add mutual capacitance energy between dots
-            for c in self.couplings.values():
-                stateEnergy += c['Em'] * ns[c['dots'][0]] * ns[c['dots'][1]]
-            # Add chemical potential energy of leads
-            for lead, name in self.leads.items():
-                stateEnergy += state[objindices(name)][0]*lead['level'] 
-            return stateEnergy
+        # def onsite(state, gates):
+        #     """Calculates onsite energy for a given charge configuration of the DotSystem."""
 
-        ham_diag = [[onsite(state,gates),state] for state in self.states[N]]
+        #     def objindices(name):
+        #         """Returns list of indices in state corresponding to dot with name."""
+        #         return [i for i,n in enumerate(state[:,1]) if n == name]
+
+        #     ns = {} # Initialize dictionary of charge on each dot
+        #     stateEnergy = 0 # Initialize energy of state to be returned
+        #     for dot, name in self.dots.items():
+        #         indices = objindices(name)
+        #         charges = np.array([state[i][1] for i in indices])
+        #         if dot['isSC']:    
+        #             stateEnergy += (charges[0]%2)*dot['orbitals']
+        #         elif np.isscalar(dot['orbitals']):
+        #             # If addition energy is the same for every orbital, we need only multiply
+        #             # the total dot charge by this orbital energy to calculate total
+        #             # non-charging-related energy
+        #             stateEnergy += sum(charges)*dot['orbitals']
+        #         else:
+        #             # For multiple orbital energies, 
+        #             numFullOrbitals = charges//dot['degeneracy']
+        #             orbs = np.array(dot['orbitals'])
+        #             # If all orbitals specified in 'orbitals' are full, then higher orbital energy
+        #             # are assumed equal to the highest specified orbital energy
+        #             if numFullOrbitals > len(orbs):
+        #                 np.append(orbs, [orbs[-1]]*(numFullOrbitals - len(orbs)))
+        #             # Add all orbital energies for each degeneracy quantum number, then sum the result
+        #             stateEnergy += sum([sum(orbs[0:subcharge]) for subcharge in charges])
+        #         # Add charging energy of dot
+        #         ns.update({name: sum(charges)-gates[name]})
+        #         stateEnergy += dot['Ec']*ns[name]**2
+        #     # Add mutual capacitance energy between dots
+        #     for c in self.couplings.values():
+        #         stateEnergy += c['Em'] * ns[c['dots'][0]] * ns[c['dots'][1]]
+        #     # Add chemical potential energy of leads
+        #     for lead, name in self.leads.items():
+        #         stateEnergy += state[objindices(name)][0]*lead['level'] 
+        #     return stateEnergy
+
+        # ham_diag = [[onsite(state,gates),state] for state in self.states[N]]
+
+        if not storeStates:
+            del self.states[N]
 
         # def is_neighbour(state1,state2):
         #     "Returns whether or not state1 & state2 have a non-zero matrix element (bool)."
