@@ -37,10 +37,7 @@ class DotSystem:
     ndots: number of dots in system
     ncouplings: number of couplings between dots in system
     nleads: number of leads in system
-    ndotscharge: number of charge type dots
-    ndotsfermionic: number of fermionic type dots
     ndotssc: number of superconducting type dots
-    _quasidots: 
     """
     def __init__(self, verbose = True):
         """
@@ -52,7 +49,7 @@ class DotSystem:
         self.dots = {}          # Dictionary of dots & their parameters
         self.couplings = {}     # Dictionary of couplings/capacitances between dots
         self.leads = {}         # Dictionary of leads and which dots they attach to
-        self.sys = []           # List of dictionaries of state info for each quantum state of system.
+        self.states = {}        # Dictionary of all possible system states, searchable by total charge N
         self._indices = []      # Dictionary which provides index for each dot/lead name, ordering them.
         self.verbose = verbose  # Suppresses printing function results if False
     
@@ -75,6 +72,11 @@ class DotSystem:
         for dot in self.dots.values():
             n += 1 if dot['isSC'] else dot['degeneracy']
         return n
+
+    @property
+    def ndotssc(self):
+        """Number of superconducting islands in system."""
+        return sum([dot['isSC'] for dot in self.dots.values()])
 
     @property
     def nleads(self):
@@ -105,7 +107,8 @@ class DotSystem:
             Dot with no degeneracy or confinement energy is added.
         """
         if isSC and not np.isscalar(orbitals):
-            raise Exception('orbEnergies must be a scalar for superconducting islands,'
+            raise Exception(
+                'orbEnergies must be a scalar for superconducting islands,'
                 + ' as it corresponds to odd parity lowest energy level.')
         if name is None: name = 'dot' + str(self.ndots)
         if any([name == n for n in {**self.dots, **self.leads}]):
@@ -126,33 +129,6 @@ class DotSystem:
             self._indices.extend([name]*self.dots[name]['degeneracy'])
         if self.verbose:
             print("Dot added with name: " + str(name) + ".")
-    
-    def delete(self, name):
-        """Delete dot/lead/coupling with 'name' and adjust _indices accordingly."""
-
-        def del_coupling(name):
-            """Deletes coupling and removes its corresponding information from self._indices."""
-            ds = list(self.couplings[name]['dots'])
-            # Delete each dot's entry in other dot's coupling list
-            del self.dots[ds[0]]['couplings'][ds[1]]
-            del self.dots[ds[1]]['couplings'][ds[0]]
-            # Delete coupling itself
-            del self.couplings[name]
-
-        if name in self.couplings:
-            del_coupling(name)
-            return
-        elif name in self.dots:
-            del self.dots[name]
-        elif name in self.leads:
-            del self.leads[name]
-        else:
-            raise Exception('Dot/lead/coupling with name ' + name + 'does not exist!')
-        for n,c in self.couplings:
-            if name in c['dots']:
-                warnings.warn('Coupling ' + n + 'involves dot/lead ' + name + ' and will be deleted.')
-                del_coupling(c)
-        self._indices.remove(name) # Adjust dot ordering/indexing if dot/lead is being removed
 
     def add_coupling(self, Em, t, dotnames, name=None):
         """Add tunnel coupling or mutual capacitance between two dots.
@@ -234,57 +210,33 @@ class DotSystem:
         if self.verbose:
             print("Lead with chemical potential " + str(level) + "added which couples to dots: " + str(dots))
 
-    def sc_state_ravel(self, dot, state):
-        """Converts flattened index of SC island state to charge/orbital state.
+    def delete(self, name):
+        """Delete dot/lead/coupling with 'name' and adjust _indices accordingly."""
 
-        ## PG. 92-94 of MSc Logbook details derivation of this expression ##
-        Given the flattened index of an SC island state, the charge and the
-        orbital state of the dot are returned.
+        def del_coupling(name):
+            """Deletes coupling and removes its corresponding information from self._indices."""
+            ds = list(self.couplings[name]['dots'])
+            # Delete each dot's entry in other dot's coupling list
+            del self.dots[ds[0]]['couplings'][ds[1]]
+            del self.dots[ds[1]]['couplings'][ds[0]]
+            # Delete coupling itself
+            del self.couplings[name]
 
-        Parameters:
-        dot (str): keyword of SC dot in self.dots whose state is being considered.
-        state (int): Position of dot state along its kwant lattice axis.
-
-        Returns:
-        charge (int): charge occupation of dot.
-        orb (int): index of orbital state of dot. 
-        """
-        if dot not in self.dots:
-            raise Exception('Input dot does not exist or is not a dot!')
-        if not self.dots[dot]['isSC']:
-            raise Exception('Input dot must be superconducting (isSC == True)!')
-        d = [1,self.dots[dot]['degeneracy']]
-        # Statement is written for more general d[0] in case other parity dependent
-        # degeneracies may be implemented later
-        charge = 2*(state // (d[0]+d[1])) + min([(state % (d[0]+d[1])) // d[0], 1])
-        orb = state % (d[0]+d[1]) - (charge % 2)*d[0]
-        return charge, orb
-
-    def sc_state_unravel(self, dot, charge, orb = 0):
-        """Convert charge/orbital state to unraveled index.
-
-        ## PG. 92-94 of MSc Logbook details derivation of this expression ##
-        Given the charge and orbital state of a dot, returns the index
-        of that state in the corresponding kwant lattice.
-
-        Parameters:
-        dot (str): keyword of dot in self.dots whose state is being considered.
-        charge (int): charge on SC island under consideration.
-        orb (int): Index of occupied orbital in superconductor. If charge is even,
-            orb must == 0 unless there is even parity degeneracy.
-
-        Returns:
-        int: state index of current charge/orbital state of SC island.
-        """
-        if dot not in self.dots:
-            raise Exception('Input dot does not exist or is not a dot!')
-        if not self.dots[dot]['isSC']:
-            raise Exception('Input dot must be superconducting (isSC == True)!')
-        # [even, odd] parity degeneracy of SC island
-        d = [1,self.dots[dot]['degeneracy']]
-        if orb > (1-charge%2)*d[0] + (charge%2)*d[1] - 1:
-            raise Exception('Orbital index exceeds number of degenerate states possible!')
-        return (charge//2)*(d[0] + d[1]) + (charge%2)*d[0] + orb 
+        if name in self.couplings:
+            del_coupling(name)
+            return
+        elif name in self.dots:
+            del self.dots[name]
+        elif name in self.leads:
+            del self.leads[name]
+        else:
+            raise Exception('Dot/lead/coupling with name ' + name + 'does not exist!')
+        for n,c in self.couplings:
+            if name in c['dots']:
+                warnings.warn('Coupling ' + n + 'involves dot/lead ' + name + ' and will be deleted.')
+                del_coupling(c)
+        self._indices.remove(name) # Adjust dot ordering/indexing if dot/lead is being removed
+        self.states = [] # Clear system state list, since it is no longer accurate
 
     def dotstates(self,nameOrIndex,N):
         """List of charge states of dot/lead returned as [nameOrIndex,charge,isSC*orbital].
@@ -389,11 +341,14 @@ class DotSystem:
     ### WILL NEED DEBUGGING ###
     def dimension(self, N):
         """Return dimension (int) of Hilbert space for a given number of charges N in the system."""
-        if self.verbose: ti = time.clock()
-        dim = len(list(self.system_states(N)))
-        if self.verbose:
-            print('Time to generate states was: ' + str(time.clock() - ti) + 's.')
-        return dim
+        # Generate system states for N total charge if it has not already been calculated.
+        if N not in self.states:
+            if self.verbose: ti = time.clock()
+            self.states[N] = list(self.system_states(N))
+            dim = len(list(self.system_states(N)))
+            if self.verbose:
+                print('Time to generate states was: ' + str(time.clock() - ti) + 's.')
+        return len(self.states[N])
 
     def get_hamiltonian(self, N, gates):
         """Retrieve system Hamiltonian for given maximum charge and current dots/leads.
@@ -418,8 +373,8 @@ class DotSystem:
         if self.nleads > 0:
             warnings.warn("At least one dot has leads, so N cannot be fixed," 
                           " and will be interpreted as the maximum charge per dot.")
-
-        dim = self.dimension(N)
+        if N not in self.states:
+            self.states[N] = list(self.system_states(N))
         ham_diag = []  #Initialize Hamiltonian diagonal
         def onsite(state, gates):
             """Calculates onsite energy for a given charge configuration of the DotSystem."""
@@ -461,7 +416,7 @@ class DotSystem:
                 stateEnergy += state[objindices(name)][0]*lead['level'] 
             return stateEnergy
 
-        ham_diag = [[onsite(state,gates),state] for state in self.system_states(N)]
+        ham_diag = [[onsite(state,gates),state] for state in self.states[N]]
 
         # def is_neighbour(state1,state2):
         #     "Returns whether or not state1 & state2 have a non-zero matrix element (bool)."
@@ -531,16 +486,18 @@ def main():
     x = 0
     system = DotSystem(verbose=True)
     #system.add_dot(100,degeneracy=1,orbitals=100,isSC = False)
-    # system.add_dot(20,degeneracy=2,orbitals=0,isSC=False)
-    # system.add_dot(30,degeneracy=4,orbitals=[3,5,6],isSC=False)
-    system.add_dot(400,name='SCdot',degeneracy=5,orbitals=100,isSC=True)
-    system.add_dot(50,name='SCdot2',degeneracy=4,orbitals=200,isSC=True)
+    system.add_dot(20,degeneracy=2,orbitals=0,isSC=False)
+    system.add_dot(30,degeneracy=2,orbitals=[3,5,6],isSC=False)
+    system.add_dot(400,name='SCdot',degeneracy=10,orbitals=100,isSC=True)
     
     print(system.ndotseff)
     print(system.ndots)
-    N = 4
-    npoints = 101
+    print(system.ndotssc)
+    N = 6
+    # npoints = 101
     print('System dimension is: ' + str(system.dimension(N)))
+    print(system.states[N])
+    print(len(system.states[N]))
 
     # if 1 == 0:    
     #     system.to_kwant(N = N)
