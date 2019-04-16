@@ -7,9 +7,8 @@ Work flow of a qdsystem calculation:
     2. Add quantum dots with their corresponding charging energies and other properties with self.add_dot()
     3. Add tunnel couplings between dots with self.add_coupling().
     4. Add leads to dots of your choice with self.add_lead().
-    5. Port the system to kwant for a given maximum charge per dot (if
-       there are leads) or total charge of the system (if there are no leads) N using self.to_kwant(N)
-    6. Calculate properties of the system using additional functionality to come.
+    5. Generate the system states for a given maximum charge (per dot if there are leads) with self.get_states(N)
+    6. Calculate properties of the system using other functions.
 """
 
 import numpy as np
@@ -160,10 +159,10 @@ class DotSystem:
             i1 = [i for i,v in self._sysTemp if v[0] == d1]
             i2 = [i for i,v in self._sysTemp if v[0] == d2]
             for i,j in zip(i1,i2):
-                self._sysTemp[i,5].update({j: t})
-                self._sysTemp[i,6].update({j: Em})
-                self._sysTemp[j,5].update({i: t})
-                self._sysTemp[j,6].update({i: Em})
+                self._sysTemp[i][5].update({j: t})
+                self._sysTemp[i][6].update({j: Em})
+                self._sysTemp[j][5].update({i: t})
+                self._sysTemp[j][6].update({i: Em})
 
         if self.verbose:
             print(
@@ -221,7 +220,7 @@ class DotSystem:
             """Deletes coupling between objects in names."""
             if len(names) == 1:
                 name = names[0]
-                for n in [n in self.objects if name in self.objects[n]['couplings']]:
+                for n in [n for n in self.objects if name in self.objects[n]['couplings']]:
                     del self.objects[n]['couplings'][name]
             else:
                 for n1,n2 in permutations(*names,2):
@@ -255,75 +254,17 @@ class DotSystem:
         })
         # Next, translate couplings into numpy array in ._sys as well
         for i,j in combinations(range(l),2):
-            t = self._sysTemp[i,5]
-            Em = self._sysTemp[i,6]
+            print(i)
+            print(j)
+            t = self._sysTemp[i][5]
+            Em = self._sysTemp[i][6]
             self._sys['t'][i,j] = t[j] if j in t else 0
             self._sys['Em'][i,j] = Em[j] if j in Em else 0
         # Finally, symmetrize the 't' and 'Em' arrays:
         self._sys['t'] = symmetrize(self._sys['t'])
         self._sys['Em'] = symmetrize(self._sys['Em'])
-
-
-
-
-    def dotstates(self,nameOrIndex,N):
-        """List of charge states of dot/lead returned as [nameOrIndex,charge,isSC*orbital].
-
-        Returns all possible states of dot with maximum charge N and minimum charge 0
-        as a list of [nameOrIndex,charge,isSC*orbital] format states. Leads may contain
-        as many as .ndots * N electrons.
-
-        Parameters:
-        nameOrIndex (int or str): Either index of dot/lead in ._indices, or keyword name
-            in .dots or .leads
-        N (int): Maximum number of charges to be allowed on dot
-
-        Returns:
-        list: List of all possible charge/orbital states of dot/lead in where each state is
-            given as a list like [nameOrIndex,charge,isSC*orbital]
-        """
-        if N in self.
-        if np.isscalar(nameOrIndex):
-            # Name of dot/lead
-            name = self._indices[nameOrIndex]
-            label = self._indices.index(name)
-        elif isinstance(nameOrIndex, str):
-            name = nameOrIndex
-            label = name
-        else:
-            raise Exception('Input must be name keyword of dot/lead, or its index in ._indices.')
-        if name in self.dots:
-            dot = self.dots[name]
-            if dot['isSC']:
-                # Degeneracy of quasiparticle states on SC island
-                deg = dot['degeneracy']
-                # Number of possible SC island states
-                numStates = (N//2)*(1+deg) + (N%2)*deg + 1
-                # List comprehension generating all possible [charge,j,orbital] states
-                return [
-                    [
-                        # Island index in self._indices or dot/lead name
-                        label,
-                        # Island charge 
-                        2*(i // (1 + deg)) + min([(i % (1 + deg)), 1]), 
-                        # 0 if even charge, index of deg. quasiparticle state if odd charge
-                        i % (1 + deg) - min([i % (1 + deg),1]) % 2
-                    ] 
-                    for i in range(numStates)
-                ]
-            else:
-                # If (effectively) a dot, states are just [charge,j,isSC = False]
-                return [[label,i,0] for i in range(N+1)]
-        elif name in self.leads:
-            # If a lead, states are just [charge,j,isSC = False]
-            return [[label,i,0] for i in range(N*self.ndots + 1)]
-        else:
-            raise Exception(
-                "Object with name: " + name + "is in self._indices" 
-                " but is not a defined lead or dot!"
-                )
         
-    def system_states(self, N):
+    def get_states(self, N):
         """Generate all possible charge/orbital states for given total charge N.
 
         Parameters:
@@ -332,39 +273,68 @@ class DotSystem:
             Otherwise:
             Maximum number of charges per dot.
 
-        Yields:
-        numpy.array: Contains state of each dot in same order as in
-            self._indices.
+        Returns:
+        numpy.array: Contains state of each (quasi-)dot/lead in same order as in
+            self._sys.
         """
+        self.finalize()
+        sys = self._sys 
+        nObjs = self.ndotseff
+        nMax = N*self.ndots if self.nleads > 0 else N
+        # List of all indices of 'quasi'-dots comprising degenerate dots
+        degIndices = [
+            [i for i,v in enumerate(sys['name']) if sys['name'][i] == n]
+            for n in sys['name'] if (sys['name'] == n).sum() > 1
+        ]
 
-        def unfixed_states():
-            """Generates all charge states without a fixed total charge, wherein each
-            effective dot may contain up to N electrons, and each lead can contain
-            ALL electrons from each dot."""                
-            # Take Cartesian product of all possible dot states to obtain a superset of 
-            # all possible states, since the totalCharge may not = N.
-            for state in product(*[self.dotstates(j,N) for j in range(len(self._indices))]):
-                yield np.array(state)
+        def isEcEnforced(chgs):
+            """Ensures degenerate dots don't have extra charge in degenerate orbital."""
+            return any([
+                any([abs(d[0]-d[1]) > 1 for d in combinations(chgs[inds],2)])
+                for inds in degIndices
+                ])
 
-        def is_possible_state(state):
-            """Checks if a charge state, given as a numpy array, is allowable for fixed total N."""
-            # Sum state tuple to find charge
-            totalCharge = state[:,1].sum()
-            # State is not possible if total charge does not equal N (no leads) or N*self.ndots (leads)
-            if (totalCharge != N and self.nleads == 0) or (totalCharge != N*self.ndots and self.nleads != 0):
-                return False
-            # Find index of 1st occurrence of all degeneracy dots, even those across different 'real' dots
-            degIndices = {self._indices.index(n) for n in self._indices if self._indices.count(n) > 1}
-            # Don't bother checking differences between degenerate dot states if there are no degeneracies
-            if len(degIndices) == 0:
-                return True
-            # Sort degeneracy dot charges by which real dot they belong to
-            dotCharges = [state[state[:,0] == i,1] for i in degIndices]
-            return not any([any([abs(d[0]-d[1]) > 1 for d in combinations(dc,2)]) for dc in dotCharges])
+        def partitions(n,k,l=0,nc=None):
+            if nc == None:
+                nc = n
+            if k < 1:
+                # If no integers are left, we are done.
+                return
+            if k == 1:
+                if nc >= l:
+                    yield (nc,)
+                # If only one integer is left, and the remainder is larger than
+                # the minimum size l, we are done.
+                return
+            for i in range(l,n+1):
+                # Call partitions with l=i to ensure that no tuple is yielded twice,
+                # as this enforces i being the largest integer
+                for r in partitions(n,k-1,l=i,nc=n-i):
+                    s = (i,) + tuple(r)
+                    # If len(s) == n, we have an (undordered) charge state
+                    print(s)
+                    if len(s) == n:
+                        # Find all ordered charge states from unordered states
+                        for p in enumerate(multiset_permutations(s)):
+                            # If degenerate dots exist, enforce charging energy.
+                            if self.ndotseff != self.ndots and not isEcEnforced(p):
+                                continue
+                            yield p
+                        continue
+                    yield s
+        
+        def dotstate(i,charge):
+            """Returns all possible dot/lead (of index i) states for given charge."""
+            deg = len(sys['orbs'][i]) if charge%2 and sys['isSC'][i] else 1
+            return [[charge,j] for j in range(deg)]
 
-        for state in unfixed_states():
-            if is_possible_state(state):
-                yield state
+        ti = time.clock()
+        states = [chgs for chgs in partitions(nMax,nObjs)]
+        print(states)
+        print(len(states))
+        print(str(time.clock() - ti) + 's')
+
+
     
     def dimension(self, N):
         """Return dimension (int) of Hilbert space for a given number of charges N in the system."""
@@ -372,7 +342,7 @@ class DotSystem:
         if N not in self.states:
             if self.verbose:
                 ti = time.clock()
-            self.states[N] = np.array(list(self.system_states(N)))
+            self.states[N] = np.array(list(self.get_states(N)))
             if self.verbose:
                 print('Time to generate states was: ' + str(time.clock() - ti) + 's.')
         return len(self.states[N])
@@ -380,25 +350,24 @@ class DotSystem:
         
 
 
-    def get_hamiltonian(self, N, gates, storeStates = True):
-        """Retrieve the system Hamiltonian for given total charge N and gate voltages."""
-        if self.nleads > 0 and self.verbose:
-            warnings.warn(
-                "At least one dot has leads, so N cannot be fixed," 
-                " and will be interpreted as the maximum charge per dot."
-                )
-        if N not in self.states:
-            self.states[N] = np.array(list(self.system_states(N)))
-        states = self.states[N]
-        indices = np.array(self._indices)
-        dots = self.dots
-        leads = self.leads
+    # def get_hamiltonian(self, N, gates, storeStates = True):
+    #     """Retrieve the system Hamiltonian for given total charge N and gate voltages."""
+    #     if self.nleads > 0 and self.verbose:
+    #         warnings.warn(
+    #             "At least one dot has leads, so N cannot be fixed," 
+    #             " and will be interpreted as the maximum charge per dot."
+    #             )
+    #     if N not in self.states:
+    #         self.states[N] = np.array(list(self.system_states(N)))
+    #     states = self.states[N]
+    #     indices = np.array(self._indices)
+    #     dots = self.dots
+    #     leads = self.leads
 
-        # charging energy first:
-        # in each state, pick out only dots
-        dotcharges = states[:,np.isin(indices,self.dots),1]
-        # Find corresponding charging energies:
-        ecs = [dots[name]['Ec'] for 
+    #     # charging energy first:
+    #     # in each state, pick out only dots
+    #     dotcharges = states[:,np.isin(indices,self.dots),1]
+    #     # Find corresponding charging energies:
 
         # def onsite(state, gates):
         #     """Calculates onsite energy for a given charge configuration of the DotSystem."""
@@ -441,9 +410,6 @@ class DotSystem:
         #     return stateEnergy
 
         # ham_diag = [[onsite(state,gates),state] for state in self.states[N]]
-
-        if not storeStates:
-            del self.states[N]
 
         # def is_neighbour(state1,state2):
         #     "Returns whether or not state1 & state2 have a non-zero matrix element (bool)."
@@ -502,7 +468,7 @@ class DotSystem:
 
 def symmetrize(mat):
     """Symmetrizes a numpy array like object."""
-    return mat + mat.T - numpy.diag(mat.diagonal())
+    return mat + mat.T - np.diag(mat.diagonal())
 
 """
 ----------------------------------------------------------------------------------------------
@@ -517,13 +483,8 @@ def main():
     system = DotSystem(verbose=True)
     #system.add_dot(100,degeneracy=1,orbitals=100,isSC = False)
     system.add_dot(20,degeneracy=2,orbitals=0,isSC=False)
-    system.add_dot(30,degeneracy=2,orbitals=[3,5,6],isSC=False)
     system.add_dot(400,name='SCdot',degeneracy=10,orbitals=100,isSC=True)
-    print(system.objects)
-    print(system._sysTemp)
-    system.delete('SCdot')
-    print(system.objects)
-    print(system._sysTemp)
+    system.get_states(2)
 
     # if 1 == 0:    
     #     system.to_kwant(N = N)
