@@ -41,13 +41,22 @@ class DotSystem:
         Constructor for DotSystem class.
 
         Parameters:
-        print (bool): whether or not to print results of calling methods
+        verbose (bool): whether or not to print results of calling methods
         """
-        self.objects = {}       # Dictionary of dots and leads and their parameters and couplings
-        self.states = {}        # Dictionary of all possible system states, searchable by total charge N
-        self._sysCurrent = []   # List containing all system information in multi-dimensional list format
-        self._sys = {}          # Dictionary containing properties from ._syscurrent in numpy array format
-        self.verbose = verbose  # Suppresses printing function results if False
+        # Dictionary of dots and leads and their parameters and couplings
+        self.objects = {}   
+        # Dictionary of all possible system states, searchable by total charge N    
+        self.states = {}
+        # Dictionary containing properties from ._sysTemp in numpy array format
+        self._sys = {}   
+        # List containing system information in mutable list format 
+        # Formatted as ._sysTemp[i] = ['name',Ec,isSC,isLead,orbitals,ts,Ems]    
+        self._sysTemp = []     
+        # Suppresses printing function results if False   
+        self.verbose = verbose
+        # Dictionary of bools: whether system has been finalized in current 
+        # configuration for a given charge (key).
+        self.isFinalized = {}
     
     def __str__(self):
         """Print class type and attributes when qdsystem is called with print()."""
@@ -59,25 +68,22 @@ class DotSystem:
     @property
     def ndots(self):
         """Number of dots in system."""
-        return len([v for v in self.objects.values() if not v['isLead']])
+        return sum([not v['isLead'] for v in self.objects.values()])
 
     @property
     def ndotseff(self):
         """Number of effective dots in system."""
-        n = 0
-        for dot in [v for v in self.objects.values() if not v['isLead']]:
-            n += 1 if dot['isSC'] else dot['degeneracy']
-        return n
+        return len(self._sysTemp)
 
     @property
     def ndotssc(self):
         """Number of superconducting islands in system."""
-        return len([v for v in self.objects.values() if v['isSC']])
+        return sum([v[2] for v in self._sysTemp])
 
     @property
     def nleads(self):
         """Number of leads in system."""
-        return len([v for v in self.objects.values() if v['isLead']])
+        return sum([v[3] for v in self._sysTemp])
 
     def add_dot(self, Ec, name=None, degeneracy=1, orbitals=0, isSC=False):    
         """Add a quantum dot to the system.
@@ -117,11 +123,11 @@ class DotSystem:
         # Add dot to collection of system objects, accounting for degeneracy
         numEffDots = isSC + (1-isSC)*degeneracy
         orbs = [orbitals]*degeneracy if isSC else orbitals
-        self._sysTemp.extend([[name,Ec,isSC,orbs]]*numEffDots)
+        self._sysTemp.extend([[name,Ec,isSC,False,orbs,{},{}]]*numEffDots)
         if self.verbose:
             print("Dot added with name: " + str(name) + ".")
 
-    def add_coupling(self, Em, t, dotnames, name=None):
+    def add_coupling(self, Em, t, dotnames):
         """Add tunnel coupling or mutual capacitance between two dots.
         
         Creates an entry in self.couplings containing a set of dots involved in the
@@ -132,29 +138,38 @@ class DotSystem:
         Em (float): Mutual capacitance energy (in ueV) between the two dots.
             Em = (e^2/Cm) / (C1*C2/Cm - 1)
         t (float): Tunnel coupling between the two dots (in ueV).
-        dotnames (list of str): List of names of dots to be coupled.
-
-        Keyword Arguments:
-        name (str): Optional name associated with coupling, stored in dict. with Em/t
+        dotnames (tuple or set of strings): List of names of dots to be coupled.
         """
         dns = list(dotnames)
-        if len(dns) > 2:
-            raise Exception('Couplings can only be defined between two dots at a time!')
-        if any([dot not in self.dots for dot in dns]):
+        if any([obj not in self.objects for obj in dns]):
             raise Exception(dot + ' is not a defined dot!')
-        if d[0] in self.dots[d[1]]['couplings'] or d[1] in self.dots[d[0]]['couplings']:
-            warnings.warn('Coupling already exists between ' + str(dns[0]) + ' and ' + str(dns[1])
-                + "! Overwriting with new coupling parameters.")
-        for i,dot in enumerate(dns):
-            if dns[i-1] in self.dots[dot]['couplings']:
-            self.dots[dot]['couplings'].update(
-                {
-                    dns[i-1]: {'Em': Em, 't': t} #Entry with OTHER dot's name as key
-                }
-            )
-            self.dots[dot]['numCouplings'] += 1
+        for d1,d2 in combinations(*dns,2):
+            if d2 in self.objects[d1]['couplings']:
+                warnings.warn(
+                    'Coupling already exists between objects ' + d1 + ' and ' + d2
+                    + "! Overwriting with new coupling parameters."
+                    )
+            else:
+                self.objects[d1]['numCouplings'] += 1
+                self.objects[d2]['numCouplings'] += 1
+            # Add entry to 'couplings' with other dot's name as key
+            c = {'Em': Em, 't': t}
+            self.objects[d1]['couplings'].update({d2: c})
+            self.objects[d2]['couplings'].update({d1: c})
+            # Update self._sysTemp with coupling information
+            i1 = [i for i,v in self._sysTemp if v[0] == d1]
+            i2 = [i for i,v in self._sysTemp if v[0] == d2]
+            for i,j in zip(i1,i2):
+                self._sysTemp[i,5].update({j: t})
+                self._sysTemp[i,6].update({j: Em})
+                self._sysTemp[j,5].update({i: t})
+                self._sysTemp[j,6].update({i: Em})
+
         if self.verbose:
-            print("Tunnel coupling and capacitance added between dots: '" + str(dotnames) + '.')
+            print(
+                "Tunnel coupling " + str(t) + " and mutual capacitance "
+                + str(Em) + "added between dots: '" + str(dotnames) + '.'
+                )
 
     def add_lead(self, dots, t, name=None, level=0):
         """Add a lead to the system.
@@ -185,12 +200,10 @@ class DotSystem:
             'isLead': True,
             'name': name,
         }
+        self._sysTemp.append([name,0,False,True,level,1,{},{}]) # Add lead to internal list of system objects
         # Create couplings dict. so 'leads' may be searched like dots
         for i,dot in enumerate(dots):
-            c = {'Em': 0, 't': t[i]}
-            self.objects[name]['couplings'][dot] = c
-            self.objects[dot]['couplings'][name] = c
-        self._sysTemp.append([name,0,False,level,1])
+            self.add_coupling(0,t[i],(name,dot))
         if self.verbose:
             print("Lead with chemical potential " + str(level) + "added which couples to dots: " + str(dots))
 
@@ -200,35 +213,58 @@ class DotSystem:
         Adjusts ._sysTemp accordingly for deleted dot/lead.
 
         Parameters:
-        names (string or tuple of two strings): if string, deletes
-            dot or lead with same name, if tuple of 2 strings, deletes
-            coupling between dots/leads in names.
+        names (string or tuple of strings): if string, deletes
+            dot or lead with same name, if tuple of strings, deletes
+            all couplings between named objects.
         """
-
-        def delete_entry(*names):
-            """Deletes entry 'val' from object 'name' or 'name' itself if val=None."""
-            if len(names) == 2:
-
-        if len(names) == 2:
-            for i,n in enumerate(names):
-                delete_entry(name[i-1],)
-        elif len(names) == 1:
-            name = names[0]
-            if name in self.dots:
-                del self.dots[name]
-            elif name in self.leads:
-                del self.leads[name]
+        def del_coupling(*names):
+            """Deletes coupling between objects in names."""
+            if len(names) == 1:
+                name = names[0]
+                for n in [n in self.objects if name in self.objects[n]['couplings']]:
+                    del self.objects[n]['couplings'][name]
             else:
-                raise Exception(str(name) + ' must be a defined dot or lead!')
-            for n,v in {**self.dots, **self.leads}:
-                if name in v['couplings']:
-                    if n in self.dots:
-                        del self.dots[n]['couplings'][name]
-                    elif n in self.leads:
-                        del self.leads[n]['couplings']
-                
+                for n1,n2 in permutations(*names,2):
+                    del self.objects[n1]['couplings'][n2]
+
+        if len(names) == 1:
+            n = names[0]
+            del self.objects[n]
+            del_coupling(n)
+            for i in [i for i,v in enumerate(self._sysTemp) if v[0] == n]:
+                del self.sysTemp[i]
+            # Dictionary of system states is no longer valid after object is removed
+            self.states = {}
         else:
-            raise Exception('Arguments must be a string or list of two strings!')
+            del_coupling(*names)
+
+    def finalize(self):
+        """Port system information from ._sysTemp to dictionary of numpy arrays in ._sys"""
+        l = len(self.objects) # Number of eff. dots / leads in system
+        # Convert ._sysTemp to numpy array of all objects
+        sys = np.array(self._sysTemp,dtype=object) 
+        # First translate each object's properties into numpy array
+        self._sys.update({
+            'name': np.array(sys[:,0],dtype=str),
+            'Ec': np.array(sys[:,1],dtype=float),
+            'isSC': np.array(sys[:,2],dtype=bool),
+            'isLead': np.array(sys[:,3],dtype=bool),
+            'orbs': np.array(sys[:,4],dtype=list),
+            'Em': np.zeros((l,l)),
+            't': np.zeros((l,l)),
+        })
+        # Next, translate couplings into numpy array in ._sys as well
+        for i,j in combinations(range(l),2):
+            t = self._sysTemp[i,5]
+            Em = self._sysTemp[i,6]
+            self._sys['t'][i,j] = t[j] if j in t else 0
+            self._sys['Em'][i,j] = Em[j] if j in Em else 0
+        # Finally, symmetrize the 't' and 'Em' arrays:
+        self._sys['t'] = symmetrize(self._sys['t'])
+        self._sys['Em'] = symmetrize(self._sys['Em'])
+
+
+
 
     def dotstates(self,nameOrIndex,N):
         """List of charge states of dot/lead returned as [nameOrIndex,charge,isSC*orbital].
@@ -246,6 +282,7 @@ class DotSystem:
         list: List of all possible charge/orbital states of dot/lead in where each state is
             given as a list like [nameOrIndex,charge,isSC*orbital]
         """
+        if N in self.
         if np.isscalar(nameOrIndex):
             # Name of dot/lead
             name = self._indices[nameOrIndex]
@@ -340,8 +377,8 @@ class DotSystem:
                 print('Time to generate states was: ' + str(time.clock() - ti) + 's.')
         return len(self.states[N])
 
-    def finalize(self):
-        print('This function is incomplete.')
+        
+
 
     def get_hamiltonian(self, N, gates, storeStates = True):
         """Retrieve the system Hamiltonian for given total charge N and gate voltages."""
@@ -463,6 +500,9 @@ class DotSystem:
 
     # Built-in analysis functions here?
 
+def symmetrize(mat):
+    """Symmetrizes a numpy array like object."""
+    return mat + mat.T - numpy.diag(mat.diagonal())
 
 """
 ----------------------------------------------------------------------------------------------
@@ -479,15 +519,11 @@ def main():
     system.add_dot(20,degeneracy=2,orbitals=0,isSC=False)
     system.add_dot(30,degeneracy=2,orbitals=[3,5,6],isSC=False)
     system.add_dot(400,name='SCdot',degeneracy=10,orbitals=100,isSC=True)
-    
-    print(system.ndotseff)
-    print(system.ndots)
-    print(system.ndotssc)
-    N = 6
-    # npoints = 101
-    print('System dimension is: ' + str(system.dimension(N)))
-    print(system.states[N])
-    print(len(system.states[N]))
+    print(system.objects)
+    print(system._sysTemp)
+    system.delete('SCdot')
+    print(system.objects)
+    print(system._sysTemp)
 
     # if 1 == 0:    
     #     system.to_kwant(N = N)
