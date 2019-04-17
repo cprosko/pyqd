@@ -17,7 +17,7 @@ import matplotlib.pyplot as plt
 import warnings
 import time
 
-from itertools import product, combinations, takewhile
+from itertools import product, combinations, permutations
 from sympy.utilities.iterables import multiset_permutations
 
 class DotSystem:
@@ -29,7 +29,7 @@ class DotSystem:
     couplings: Sorted dictionary capacitances/couplings between dots
     leads: Sorted dictionary of leads and their properties
     sys: kwant system for porting system properties to kwant
-    print: whether or not to print results of calling methods
+    verbose: whether or not to print results of calling methods
     ndots: number of dots in system
     ncouplings: number of couplings between dots in system
     nleads: number of leads in system
@@ -121,8 +121,16 @@ class DotSystem:
             }
         # Add dot to collection of system objects, accounting for degeneracy
         numEffDots = isSC + (1-isSC)*degeneracy
-        orbs = [orbitals]*degeneracy if isSC else orbitals
-        self._sysTemp.extend([[name,Ec,isSC,False,orbs,{},{}]]*numEffDots)
+        self._sysTemp.extend([[
+            name,
+            Ec,
+            isSC,
+            False, # Dots are not leads
+            orbitals, # Odd parity free energy if isSC, else list of orbital energies
+            degeneracy, # Degeneracy of orbitals (quasiparticle states) for dots (SC islands).
+            {}, # Dictionary of all dots with tunnel couplings
+            {}, # Dictionary of all dots with mutual capacitances
+            ]]*numEffDots)
         if self.verbose:
             print("Dot added with name: " + str(name) + ".")
 
@@ -141,8 +149,8 @@ class DotSystem:
         """
         dns = list(dotnames)
         if any([obj not in self.objects for obj in dns]):
-            raise Exception(dot + ' is not a defined dot!')
-        for d1,d2 in combinations(*dns,2):
+            raise Exception(dns + ' contains undefined dots or leads!')
+        for d1,d2 in combinations(dns,2):
             if d2 in self.objects[d1]['couplings']:
                 warnings.warn(
                     'Coupling already exists between objects ' + d1 + ' and ' + d2
@@ -156,18 +164,18 @@ class DotSystem:
             self.objects[d1]['couplings'].update({d2: c})
             self.objects[d2]['couplings'].update({d1: c})
             # Update self._sysTemp with coupling information
-            i1 = [i for i,v in self._sysTemp if v[0] == d1]
-            i2 = [i for i,v in self._sysTemp if v[0] == d2]
+            i1 = [i for i,v in enumerate(self._sysTemp) if v[0] == d1]
+            i2 = [i for i,v in enumerate(self._sysTemp) if v[0] == d2]
             for i,j in zip(i1,i2):
-                self._sysTemp[i][5].update({j: t})
-                self._sysTemp[i][6].update({j: Em})
-                self._sysTemp[j][5].update({i: t})
-                self._sysTemp[j][6].update({i: Em})
+                self._sysTemp[i][6].update({j: t})
+                self._sysTemp[i][7].update({j: Em})
+                self._sysTemp[j][6].update({i: t})
+                self._sysTemp[j][7].update({i: Em})
 
         if self.verbose:
             print(
                 "Tunnel coupling " + str(t) + " and mutual capacitance "
-                + str(Em) + "added between dots: '" + str(dotnames) + '.'
+                + str(Em) + " added between dots: " + str(dotnames) + '.'
                 )
 
     def add_lead(self, dots, t, name=None, level=0):
@@ -191,12 +199,12 @@ class DotSystem:
             name = 'lead' + str(self.nleads)
         if any([name == n for n in self.objects]):
             raise Exception("Lead or dot with name '" + name + "' is already defined.")
-        index = self.ndots + self.nleads
         self.objects[name] = {
             'couplings': {},
             'level': level,
             'isSC': False, # Must be included for organization of charge states later.
             'isLead': True,
+            'numCouplings': 0,
             'name': name,
         }
         self._sysTemp.append([name,0,False,True,level,1,{},{}]) # Add lead to internal list of system objects
@@ -231,7 +239,7 @@ class DotSystem:
             del self.objects[n]
             del_coupling(n)
             for i in [i for i,v in enumerate(self._sysTemp) if v[0] == n]:
-                del self.sysTemp[i]
+                del self._sysTemp[i]
             # Dictionary of system states is no longer valid after object is removed
             self.states = {}
         else:
@@ -249,15 +257,14 @@ class DotSystem:
             'isSC': np.array(sys[:,2],dtype=bool),
             'isLead': np.array(sys[:,3],dtype=bool),
             'orbs': np.array(sys[:,4],dtype=list),
+            'deg': np.array(sys[:,5],dtype=int),
             'Em': np.zeros((l,l)),
             't': np.zeros((l,l)),
         })
         # Next, translate couplings into numpy array in ._sys as well
         for i,j in combinations(range(l),2):
-            print(i)
-            print(j)
-            t = self._sysTemp[i][5]
-            Em = self._sysTemp[i][6]
+            t = self._sysTemp[i][6]
+            Em = self._sysTemp[i][7]
             self._sys['t'][i,j] = t[j] if j in t else 0
             self._sys['Em'][i,j] = Em[j] if j in Em else 0
         # Finally, symmetrize the 't' and 'Em' arrays:
@@ -282,60 +289,60 @@ class DotSystem:
         nObjs = self.ndotseff
         nMax = N*self.ndots if self.nleads > 0 else N
         # List of all indices of 'quasi'-dots comprising degenerate dots
-        degIndices = [
+        degIndices = np.array([
             [i for i,v in enumerate(sys['name']) if sys['name'][i] == n]
             for n in sys['name'] if (sys['name'] == n).sum() > 1
-        ]
+        ])
 
-        def isEcEnforced(chgs):
+        def isEcEnforced(chgs,degIndices=degIndices):
             """Ensures degenerate dots don't have extra charge in degenerate orbital."""
-            return any([
-                any([abs(d[0]-d[1]) > 1 for d in combinations(chgs[inds],2)])
+            return not any([
+                any([abs(d[0]-d[1]) > 1
+                for d in combinations(chgs[inds],2)
+                ])
                 for inds in degIndices
                 ])
 
-        def partitions(n,k,l=0,nc=None):
-            if nc == None:
-                nc = n
-            if k < 1:
+        def dotstates(charges):
+            """Returns all possible dot/lead (of index i) states for given charge."""
+            # Degeneracy of each (quasi-)dot, SC island or lead
+            deg = np.where((charges%2)*sys['isSC'] == True,sys['deg'],1)
+            return [[[c,j] for j in range(deg[i])] for i,c in enumerate(charges)]
+
+        def partitions(n,k,l=0,kc=None):
+            if kc == None:
+                kc = k
+            j = k-kc # Current index in self._sys
+            if kc < 1:
                 # If no integers are left, we are done.
                 return
-            if k == 1:
-                if nc >= l:
-                    yield (nc,)
+            if kc == 1:
+                if n >= l:
+                    yield (n,)
                 # If only one integer is left, and the remainder is larger than
                 # the minimum size l, we are done.
                 return
             for i in range(l,n+1):
                 # Call partitions with l=i to ensure that no tuple is yielded twice,
                 # as this enforces i being the largest integer
-                for r in partitions(n,k-1,l=i,nc=n-i):
-                    s = (i,) + tuple(r)
+                for r in partitions(n-i,k,l=i,kc=kc-1):
+                    s = tuple(r) + (i,)
                     # If len(s) == n, we have an (undordered) charge state
-                    print(s)
-                    if len(s) == n:
+                    if len(s) == k:
                         # Find all ordered charge states from unordered states
-                        for p in enumerate(multiset_permutations(s)):
+                        for p in [np.array(p) for p in multiset_permutations(s)]:
                             # If degenerate dots exist, enforce charging energy.
                             if self.ndotseff != self.ndots and not isEcEnforced(p):
                                 continue
-                            yield p
+                            for state in product(*dotstates(p)):
+                                yield state
                         continue
                     yield s
-        
-        def dotstate(i,charge):
-            """Returns all possible dot/lead (of index i) states for given charge."""
-            deg = len(sys['orbs'][i]) if charge%2 and sys['isSC'][i] else 1
-            return [[charge,j] for j in range(deg)]
 
         ti = time.clock()
-        states = [chgs for chgs in partitions(nMax,nObjs)]
-        print(states)
-        print(len(states))
-        print(str(time.clock() - ti) + 's')
-
-
-    
+        self.states[N] = [chgs for chgs in partitions(nMax,nObjs)]
+        if self.verbose: print(str(time.clock() - ti) + 's')
+        
     def dimension(self, N):
         """Return dimension (int) of Hilbert space for a given number of charges N in the system."""
         # Generate system states for N total charge if it has not already been calculated.
@@ -467,8 +474,8 @@ class DotSystem:
     # Built-in analysis functions here?
 
 def symmetrize(mat):
-    """Symmetrizes a numpy array like object."""
-    return mat + mat.T - np.diag(mat.diagonal())
+    """Symmetrizes a numpy array like object and halves its entries"""
+    return (mat + mat.T - np.diag(mat.diagonal()))/2
 
 """
 ----------------------------------------------------------------------------------------------
@@ -479,12 +486,17 @@ FOR TESTING
 """
 
 def main():
-    x = 0
+    N = 3
     system = DotSystem(verbose=True)
     #system.add_dot(100,degeneracy=1,orbitals=100,isSC = False)
-    system.add_dot(20,degeneracy=2,orbitals=0,isSC=False)
-    system.add_dot(400,name='SCdot',degeneracy=10,orbitals=100,isSC=True)
-    system.get_states(2)
+    system.add_dot(20,name='dot0',degeneracy=2,orbitals=0,isSC=False)
+    system.add_dot(50,name='dot1',degeneracy=1,orbitals=0,isSC=False)
+    system.add_lead(['dot0','dot1'],[20,30],name='lead0',level=0)
+    #system.add_dot(400,name='SCdot',degeneracy=1000,orbitals=200,isSC=True)
+    system.get_states(N)
+    print(system.ndotseff)
+    print(system.ndots)
+    print(len(system.states[N]))
 
     # if 1 == 0:    
     #     system.to_kwant(N = N)
