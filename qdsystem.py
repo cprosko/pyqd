@@ -11,6 +11,11 @@ Work flow of a qdsystem calculation:
     6. Calculate properties of the system using other functions.
 """
 
+### TO DO:
+# 1. Make LEADS able to contain larger charge than dots
+# 2. Optimize partitions() function -- unnecessarily slow when #partitions < N
+# 3. Vectorize calculation of 'diffs' in .areNeighbours(), currently uses list comp.
+
 import numpy as np
 import scipy.sparse as sp
 import matplotlib.pyplot as plt
@@ -49,19 +54,22 @@ class DotSystem:
         # Dictionary containing properties from ._sysTemp in numpy array format
         self._sys = {}   
         # List containing system information in mutable list format 
-        # Formatted as ._sysTemp[i] = ['name',Ec,isSC,isLead,orbitals,ts,Ems]    
+        # Formatted as ._sysTemp[i] = ['name',Ec,isSC,isLead,orbitals,deg.,ts,Ems]    
         self._sysTemp = []     
         # Suppresses printing function results if False   
         self.verbose = verbose
-        # Dictionary of bools: whether system has been finalized in current 
-        # configuration for a given charge (key).
-        self.isFinalized = {}
+        # Whether system has been finalized into processable form.
+        self.isFinalized = False
     
     def __str__(self):
         """Print class type and attributes when qdsystem is called with print()."""
-        output = "qdsystem class object with: \n"
-        output += str(self.ndots) + " total dots, with "
-        output += str(self.nleads) + " leads."
+        output = (
+            'qdsystem class object with: \n'
+            +str(self.ndots)+' total dot{plr}, '.format(plr='s' if self.ndots > 1 else '')
+            +str(self.ndotssc)+' of which are superconducting and '
+            +str(self.ndots-self.ndotssc)+' of which are normal, as well as '
+            +str(self.nleads)+' lead{plr}.'.format(plr='s' if self.nleads > 1 else '')
+        )
         return output
 
     @property
@@ -121,6 +129,9 @@ class DotSystem:
             }
         # Add dot to collection of system objects, accounting for degeneracy
         numEffDots = isSC + (1-isSC)*degeneracy
+        # Account for the fact that 0 electrons costs 0 orbital energy
+        if not isSC:
+            orbitals = [0,orbitals] if np.isscalar(orbitals) else [0] + orbitals
         self._sysTemp.extend([[
             name,
             Ec,
@@ -244,10 +255,11 @@ class DotSystem:
             self.states = {}
         else:
             del_coupling(*names)
+        self.isFinalized = False
 
     def finalize(self):
         """Port system information from ._sysTemp to dictionary of numpy arrays in ._sys"""
-        l = len(self.objects) # Number of eff. dots / leads in system
+        l = self.ndotseff # Number of eff. dots / leads in system
         # Convert ._sysTemp to numpy array of all objects
         sys = np.array(self._sysTemp,dtype=object) 
         # First translate each object's properties into numpy array
@@ -256,7 +268,7 @@ class DotSystem:
             'Ec': np.array(sys[:,1],dtype=float),
             'isSC': np.array(sys[:,2],dtype=bool),
             'isLead': np.array(sys[:,3],dtype=bool),
-            'orbs': np.array(sys[:,4],dtype=list),
+            'orb': np.array(sys[:,4],dtype=list),
             'deg': np.array(sys[:,5],dtype=int),
             'Em': np.zeros((l,l)),
             't': np.zeros((l,l)),
@@ -270,6 +282,7 @@ class DotSystem:
         # Finally, symmetrize the 't' and 'Em' arrays:
         self._sys['t'] = symmetrize(self._sys['t'])
         self._sys['Em'] = symmetrize(self._sys['Em'])
+        self.isFinalized = True
         
     def get_states(self, N):
         """Generate all possible charge/orbital states for given total charge N.
@@ -284,14 +297,15 @@ class DotSystem:
         numpy.array: Contains state of each (quasi-)dot/lead in same order as in
             self._sys.
         """
-        self.finalize()
+        if not self.isFinalized:
+            self.finalize()
         sys = self._sys 
         nObjs = self.ndotseff
         nMax = N*self.ndots if self.nleads > 0 else N
         # List of all indices of 'quasi'-dots comprising degenerate dots
         degIndices = np.array([
             [i for i,v in enumerate(sys['name']) if sys['name'][i] == n]
-            for n in sys['name'] if (sys['name'] == n).sum() > 1
+            for n in set(sys['name']) if (sys['name'] == n).sum() > 1
         ])
 
         def isEcEnforced(chgs,degIndices=degIndices):
@@ -312,7 +326,6 @@ class DotSystem:
         def partitions(n,k,l=0,kc=None):
             if kc == None:
                 kc = k
-            j = k-kc # Current index in self._sys
             if kc < 1:
                 # If no integers are left, we are done.
                 return
@@ -335,143 +348,125 @@ class DotSystem:
                             if self.ndotseff != self.ndots and not isEcEnforced(p):
                                 continue
                             for state in product(*dotstates(p)):
-                                yield state
+                                yield np.array(state)
                         continue
                     yield s
 
         ti = time.clock()
-        self.states[N] = [chgs for chgs in partitions(nMax,nObjs)]
-        if self.verbose: print(str(time.clock() - ti) + 's')
+        self.states[N] = np.array([chgs for chgs in partitions(nMax,nObjs)])
+        if self.verbose: print("Time to generate system states was " + str(time.clock() - ti) + 's')
+
+        return self.states[N]
         
     def dimension(self, N):
         """Return dimension (int) of Hilbert space for a given number of charges N in the system."""
-        # Generate system states for N total charge if it has not already been calculated.
         if N not in self.states:
-            if self.verbose:
-                ti = time.clock()
-            self.states[N] = np.array(list(self.get_states(N)))
-            if self.verbose:
-                print('Time to generate states was: ' + str(time.clock() - ti) + 's.')
+            self.get_states(N)
         return len(self.states[N])
 
+    def onsite(self,states,gates):
+        """Vectorized function to find on-site energy of system states.
+
+        Given numpy array with system states listed along one axis,
+        calculates energy of each state and returns it as a vector.
+
+        Parameters:
+        states (ndarray): Array of system states. Should have shape
+            (#states,#effective system objects,2)
+        gates (dict): Reduced gate voltages for each object in system.
+            note: Leads should have 'gate' voltage 0 due to limitations
+            in simulation. 
+
+        Returns:
+        E (ndarray): numpy array of onsite energy corresponding to each state.
+        """
+        ti = time.clock()
+        sys = self._sys
+        numStates = len(states[...,0])
+        # Compute total charging energy
+        EcTot = np.zeros(numStates)
+        for n in gates:
+            Ec = sys['Ec'][sys['name']==n][0]
+            # Must sum degenerate charges on quasi-dots before squaring, since
+            # they correspond to the same 'real' dot
+            ns = np.sum(states[:,sys['name']==n,0],axis=1) - gates[n]
+            EcTot += Ec*ns**2
+        # Compute all diagonal 'expectation values' of Em to find mutual capacitance energy.
+        EmTot = np.einsum('ji,ij->j',states[...,0], sys['Em'] @ states[...,0].T)
+        # Compute orbital energy of SC quasiparticles then of electrons on normal dots.
+        Eorb = np.einsum('i,ij',np.array(np.where(sys['isSC'],sys['orb'],0),dtype=float),states[...,0].T%2)
+        # Add orbital energies of normal dots:
+        Eorb +=np.sum(
+            [
+                np.take(o,states[:,i,0],mode='clip')
+                for i,o in enumerate(sys['orb'][sys['isSC']==False])
+            ],
+            axis = 0
+        )
+        if self.verbose:
+            print('Time to generate all onsite energies was: ' + str(time.clock()-ti) + 's.')
+        return EcTot + EmTot + Eorb
+
+    def areNeighbours(self,states,hamiltonian=False):
+        """Find which in set of states are nearest neighbours.
         
-
-
-    # def get_hamiltonian(self, N, gates, storeStates = True):
-    #     """Retrieve the system Hamiltonian for given total charge N and gate voltages."""
-    #     if self.nleads > 0 and self.verbose:
-    #         warnings.warn(
-    #             "At least one dot has leads, so N cannot be fixed," 
-    #             " and will be interpreted as the maximum charge per dot."
-    #             )
-    #     if N not in self.states:
-    #         self.states[N] = np.array(list(self.system_states(N)))
-    #     states = self.states[N]
-    #     indices = np.array(self._indices)
-    #     dots = self.dots
-    #     leads = self.leads
-
-    #     # charging energy first:
-    #     # in each state, pick out only dots
-    #     dotcharges = states[:,np.isin(indices,self.dots),1]
-    #     # Find corresponding charging energies:
-
-        # def onsite(state, gates):
-        #     """Calculates onsite energy for a given charge configuration of the DotSystem."""
-
-        #     def objindices(name):
-        #         """Returns list of indices in state corresponding to dot with name."""
-        #         return [i for i,n in enumerate(state[:,1]) if n == name]
-
-        #     ns = {} # Initialize dictionary of charge on each dot
-        #     stateEnergy = 0 # Initialize energy of state to be returned
-        #     for dot, name in self.dots.items():
-        #         indices = objindices(name)
-        #         charges = np.array([state[i][1] for i in indices])
-        #         if dot['isSC']:    
-        #             stateEnergy += (charges[0]%2)*dot['orbitals']
-        #         elif np.isscalar(dot['orbitals']):
-        #             # If addition energy is the same for every orbital, we need only multiply
-        #             # the total dot charge by this orbital energy to calculate total
-        #             # non-charging-related energy
-        #             stateEnergy += sum(charges)*dot['orbitals']
-        #         else:
-        #             # For multiple orbital energies, 
-        #             numFullOrbitals = charges//dot['degeneracy']
-        #             orbs = np.array(dot['orbitals'])
-        #             # If all orbitals specified in 'orbitals' are full, then higher orbital energy
-        #             # are assumed equal to the highest specified orbital energy
-        #             if numFullOrbitals > len(orbs):
-        #                 np.append(orbs, [orbs[-1]]*(numFullOrbitals - len(orbs)))
-        #             # Add all orbital energies for each degeneracy quantum number, then sum the result
-        #             stateEnergy += sum([sum(orbs[0:subcharge]) for subcharge in charges])
-        #         # Add charging energy of dot
-        #         ns.update({name: sum(charges)-gates[name]})
-        #         stateEnergy += dot['Ec']*ns[name]**2
-        #     # Add mutual capacitance energy between dots
-        #     for c in self.couplings.values():
-        #         stateEnergy += c['Em'] * ns[c['dots'][0]] * ns[c['dots'][1]]
-        #     # Add chemical potential energy of leads
-        #     for lead, name in self.leads.items():
-        #         stateEnergy += state[objindices(name)][0]*lead['level'] 
-        #     return stateEnergy
-
-        # ham_diag = [[onsite(state,gates),state] for state in self.states[N]]
-
-        # def is_neighbour(state1,state2):
-        #     "Returns whether or not state1 & state2 have a non-zero matrix element (bool)."
-        #     diffDots = {} # Set containing names of dots whose charge differs between states
-        #     for s1, s2 in zip(state1, state2):
-        #         # Set eff. dot label to 'SC' if SC, else leave as degeneracy index
-        #         # for normal dots, or as 'lead' for leads.
-        #         i1 = 'SC' if s1[0] in self.dots and self.dots[s1[0]]['isSC'] else s1[2]
-        #         i2 = 'SC' if s2[0] in self.dots and self.dots[s2[0]]['isSC'] else s2[2]
-        #         # Check if dot/lead names are equal and if degeneracy index is equal
-        #         if s1[0] == s2[0] and i1 == i2:
-        #             diff = abs(s1[1]-s2[1]) # Difference in dot charge between states
-        #             if diff > 1:
-        #                 # Charge on dot differs by >=2 between states
-        #                 return False
-        #             elif diff = 1:
-        #                 1 == 1
-        #                 # Charge has been tranferred between these 2 dots
-
-        #                 diffDots.update({s1[0],s2[0]})
-        #         if len(diffDots) > 2:
-        #             return False
-        #     if len(diffDots) == 2 and any([c['names'] == diffDots for c in self.couplings]):
-        #         # Only two (effective) dots differ in charge, and they have a coupling with each other
-        #         return True
-        #     return False
-
-
+        For each pair of states in an array of states, determines
+        which differ by only a single charge transfer, without any hopping
+        of electrons from one quasiparticle state to another.
         
-    # def get_num_op(self, dotname, N):
-    #     """Return number operator for a given dot.
+        Parameters:
+        states (ndarray): Array where each row is a possible state
 
-    #     Parameters:
-    #     dotname (str): key for dot in self.dots.
-    #     N (int): Total charge in system if there are no leads,
-    #         or maximum charge per dot if there are leads.
-    #         Required because system's dimensionality is dependent on N.
+        Keyword Arguments:
+        hamiltonian (bool): Whether or not to return tunneling matrix
         
-    #     Returns:
-    #     ndarray: Matrix form of the number operator for desired dot.
-    #     """
-    #     self.indexer()
-    #     dim = self.dimension(N)
-    #     dot = self.dots[dotname]
+        Returns:
+        (ndarray): Array with size equal to the number of input states squared,
+            with True in all matrix elements where the corresponding states are 
+            nearest neighbours, and False in all others (hamiltonian == True), or
+            the tunneling Hamiltonian given couplings in ._sys['t']
+            (hamiltonian == False).
+        """
+        sys = self._sys
+        nStates = len(states[:,0,0])
+        ti = time.clock()
+        # Generate array (numStates,numStates,len(state)) of differences between
+        # each combination of states.
+        diffs = np.array([states[i,...] - states for i in range(nStates)])
+        if self.verbose:
+            print('Time to generate all state combos was ' + str(time.clock()-ti) + 's.')
+        # Find states where exactly 1 particle hopped
+        # Note: This assumes that input states have conserved total charge.
+        nbrs = np.sum(np.abs(diffs),axis=2)[...,0] == 2
+        # Ensure no quasiparticle hopping has occurred as well:
+        nbrs *= np.any((diffs[...,0] == 0)*(diffs[...,1] != 0),axis=2) == False
+        if not hamiltonian:
+            return nbrs
+        # Select vectors of charge differences for only nearest neighbours.
+        nbrDiffs = diffs[nbrs,:,0]
+        # Calculate array of obj. indices where charge was transferred
+        objInds = np.nonzero(nbrDiffs)[1].reshape((len(nbrDiffs[:,0]),2)).T
+        # Flatten indices to match size of ._sys['t'] (tunnel coupling matrix)
+        print(sys['t'].shape)
+        objInds = np.ravel_multi_index(objInds,sys['t'].shape)
+        # Find tunnel coupling magnitude for each nearest neighbour
+        ts = np.take(sys['t'],objInds)
+        ham = np.zeros((nStates,nStates))
+        ham[nbrs] = ts
+        return ham
 
-    #     numOp = np.zeros((dim,dim))
-    #     for i in range(dim):
-    #         pos = list(self.sys.sites[i].pos)
-    #         if self.dots[dotname]['type'] == 'superconducting':
-    #             numOp[i,i] = self.sc_state_mapper(dot, pos[dot['indices'][0]], want='charge')
-    #         else:
-    #             numOp[i,i] = sum(pos[dot['indices'][0]: dot['indices'][1] + 1])
-    #     return numOp
-
-    # Built-in analysis functions here?
+    def get_num_op(self,name,N=None):
+        if N == None:
+            if len(self.states) > 0:
+                states = self.states[max([k for k in self.states])]
+            else:
+                raise Exception(
+                    "System states must be already generated or total "
+                    + "charge must be specified to get number operator."""
+                    )
+        else:
+            states = self.states[N]
+        ### WORK IN PROGRESS ###
 
 def symmetrize(mat):
     """Symmetrizes a numpy array like object and halves its entries"""
@@ -486,18 +481,19 @@ FOR TESTING
 """
 
 def main():
-    N = 3
+    N = 2
     system = DotSystem(verbose=True)
     #system.add_dot(100,degeneracy=1,orbitals=100,isSC = False)
-    system.add_dot(20,name='dot0',degeneracy=2,orbitals=0,isSC=False)
-    system.add_dot(50,name='dot1',degeneracy=1,orbitals=0,isSC=False)
-    system.add_lead(['dot0','dot1'],[20,30],name='lead0',level=0)
+    system.add_dot(20,name='dot0',degeneracy=2,orbitals=[11,22,33],isSC=False)
+    system.add_dot(50,name='dot1',degeneracy=3,orbitals=200,isSC=True)
+    system.add_lead(['dot0'],[20,30],name='lead0',level=0)
+    system.add_coupling(1234,3.14,['dot0','dot1'])
+    print(system)
     #system.add_dot(400,name='SCdot',degeneracy=1000,orbitals=200,isSC=True)
     system.get_states(N)
-    print(system.ndotseff)
-    print(system.ndots)
-    print(len(system.states[N]))
-
+    gates = {'dot0': 0, 'dot1': 10}
+    energies = system.onsite(system.states[N],gates)
+    system.areNeighbours(system.states[N],True)
     # if 1 == 0:    
     #     system.to_kwant(N = N)
     #     gatespace = {}
@@ -637,7 +633,6 @@ def main():
     #     plt.show()
 
     #     print(system.couplings)
-    
     
 if __name__ == '__main__':
     main()
