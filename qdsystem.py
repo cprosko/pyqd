@@ -4,18 +4,19 @@ Package for simulating quantum dot systems with or without leads.
 
 Work flow of a qdsystem calculation:
     1. Initialize an instance of the qdsystem class.
-    2. Add quantum dots with their corresponding charging energies and other properties with self.add_dot()
+    2. Add quantum dots with their corresponding charging energies
+       and other properties with self.add_dot()
     3. Add tunnel couplings between dots with self.add_coupling().
     4. Add leads to dots of your choice with self.add_lead().
-    5. Generate the system states for a given maximum charge (per dot if there are leads) with self.get_states(N)
+    5. Generate the system states for a given maximum charge
+       (per dot if there are leads) with self.get_states(N).
     6. Calculate properties of the system using other functions.
 """
 
 ### TO DO:
-# 1. Make LEADS able to contain larger charge than dots
-# 2. Optimize partitions() function -- unnecessarily slow when #partitions < N
+# 2. Optimize partitions() function
 # 3. Vectorize calculation of 'diffs' in .areNeighbours(), currently uses list comp.
-# 4. Add lever arm functionality to .cp_stability_diagram
+# 4. Fix spin for SC islands
 
 import numpy as np
 import scipy.sparse.linalg as sla
@@ -135,7 +136,7 @@ class DotSystem:
             'name': name, # For reverse searching in internal algorithms
             }
         # Add dot to collection of system objects, accounting for degeneracy
-        numEffDots = isSC + (1-isSC)*degeneracy
+        numEffDots = isSC + (1-isSC)*(degeneracy if degeneracy != 'spin' else 2)
         # Account for the fact that 0 electrons costs 0 orbital energy
         if not isSC:
             orbitals = [0,orbitals] if np.isscalar(orbitals) else [0] + orbitals
@@ -278,10 +279,17 @@ class DotSystem:
             'isLead': np.array(sys[:,3],dtype=bool),
             'orb': np.array(sys[:,4],dtype=list),
             'deg': np.array([i if i != 'spin' else 2 for i in sys[:,5]],dtype=int),
-            'hasSpin': np.array([i == 'spin' for i in sys[:,5]],dtype=bool),
+            'spin': np.array([i if i=='spin' else 'none' for i in sys[:,5]],dtype=str),
             'Em': np.zeros((l,l)),
             't': np.zeros((l,l)),
         })
+        # Appoint each spinful 'quasi'-dot with either spin 'up' or 'down'
+        for i,s in enumerate(self.__sys['spin']):
+            if self.__sys['isSC'][i]:
+                self.__sys['spin'][i] = 'SC'
+            elif s=='spin' and self.__sys['name'][i]==self.__sys['name'][i+1]:
+                self.__sys['spin'][i] = 'down'
+                self.__sys['spin'][i+1] = 'up'
         # Next, translate couplings into numpy array in .__sys as well
         for i,j in combinations(range(l),2):
             t = self.__sysTemp[i][6]
@@ -339,6 +347,13 @@ class DotSystem:
             return np.any(charges[sys['isLead']==False] > N)
 
         def partitions(n,k,NInput,l=0,kc=None):
+            """Yields possible charge/orbital states.
+
+            Finds all possible partitions of n into k integers with minimum
+            parition size l. kc is used for the recursive part of the algorithm.
+            Augments this algorithm by generating all unique permutations of 
+            results, and checking which are physical for the system at hand.
+            """
             if kc == None:
                 kc = k
             if kc < 1:
@@ -461,7 +476,7 @@ class DotSystem:
             if N == None:
                 raise Exception(
                     "Total charge must be specified to store Hamiltonian in "
-                    + ".__tunnelingHam!"
+                    + ".__tunnelingHam for later use!"
                 )
             elif N in self.__tunnelingHam:
                 return self.__tunnelingHam[N]
@@ -473,25 +488,37 @@ class DotSystem:
         # Generate array (numStates,numStates,len(state)) of differences between
         # each combination of states.
         diffs = np.array([states[i,...] - states for i in range(nStates)])
-        if self.verbose:
-            print('Time to generate all state combos was ' + str(time.clock()-ti) + 's.')
-        # Find states where exactly 1 particle hopped
-        # Note: This assumes that input states have conserved total charge.
+        # Find states where exactly 1 particle hopped, assumes states have
+        # conserved total charge.
         nbrs = np.sum(np.abs(diffs),axis=2)[...,0] == 2
         # Ensure no quasiparticle hopping has occurred as well:
         nbrs *= np.any((diffs[...,0] == 0)*(diffs[...,1] != 0),axis=2) == False
-        if not hamiltonian:
-            return nbrs
         # Select vectors of charge differences for only nearest neighbours.
         nbrDiffs = diffs[nbrs,:,0]
         # Calculate array of obj. indices where charge was transferred
-        objInds = np.nonzero(nbrDiffs)[1].reshape((len(nbrDiffs[:,0]),2)).T
+        objInds = np.nonzero(nbrDiffs)[1].reshape((len(nbrDiffs[:,0]),2))
+        # List of bools of whether each NN pair DID NOT involve a spin flip
+        spinConserved = [
+            (
+                sys['spin'][objInds[i,0]]==sys['spin'][objInds[i,1]]
+                or sys['spin'][objInds[i,0]] == 'none'
+                or sys['spin'][objInds[i,1]] == 'none'
+            )
+            for i in range(objInds.size//2)
+        ]
+        nbrs[nbrs] = spinConserved
+        if not hamiltonian:
+            return nbrs
+        # Remove index pairs from objInds corresponding
+        objInds = objInds[spinConserved,:].T
         # Flatten indices to match size of .__sys['t'] (tunnel coupling matrix)
         objInds = np.ravel_multi_index(objInds,sys['t'].shape)
         # Find tunnel coupling magnitude for each nearest neighbour
         ts = np.take(sys['t'],objInds)
         ham = np.zeros((nStates,nStates))
         ham[nbrs] = ts
+        if self.verbose:
+            print('Time to generate all state combos was ' + str(time.clock()-ti) + 's.')
         self.__tunnelingHam[N] = ham
         return ham
 
@@ -580,9 +607,11 @@ class DotSystem:
                     v0 = v
                     energies[i,j] = e
                 else:
+                    print('started!')
                     e,v = np.linalg.eigh(h)
-                    v0 = v[:,0]
-                    energies[i,j] = e[0]
+                    print('done!')
+                    v0 = v[:,0] + v[:,1]
+                    energies[i,j] = e[0] + e[1]
                 ns[i,j,0] = v0.T @ numOp1 @ v0
                 ns[i,j,1] = v0.T @ numOp2 @ v0
             if self.verbose:
@@ -601,17 +630,23 @@ class DotSystem:
         ax = axs[0,0]
         im = ax.pcolormesh(gates[probeName],gates[coupledDot],cp.T,**plotparams)
         fig.colorbar(im,ax=ax,label='C_p')
-        plt.xlabel(gvar[0] + ' reduced voltage')
-        plt.ylabel(gvar[1] + ' reduced voltage')
+        ax.set_xlabel(gvar[0] + ' reduced voltage')
+        ax.set_ylabel(gvar[1] + ' reduced voltage')
         ax = axs[0,1]
         im = ax.pcolormesh(gates[probeName],gates[coupledDot],energies.T,**plotparams)
         fig.colorbar(im,ax=ax,label='GS Energy (rel. units)')
+        ax.set_xlabel(gvar[0] + ' reduced voltage')
+        ax.set_ylabel(gvar[1] + ' reduced voltage')
         ax = axs[1,0]
         im = ax.pcolormesh(gates[probeName],gates[coupledDot],ns[...,0].T,**plotparams)
         fig.colorbar(im,ax=ax,label='<n> (probed dot)')
+        ax.set_xlabel(gvar[0] + ' reduced voltage')
+        ax.set_ylabel(gvar[1] + ' reduced voltage')
         ax = axs[1,1]
         im = ax.pcolormesh(gates[probeName],gates[coupledDot],ns[...,1].T,**plotparams)
         fig.colorbar(im,ax=ax,label='<n> (other dot)')
+        ax.set_xlabel(gvar[0] + ' reduced voltage')
+        ax.set_ylabel(gvar[1] + ' reduced voltage')
         plt.show()
         
 def symmetrize(mat):
@@ -622,19 +657,19 @@ def main():
     print("Calling main() yields a stability diagram of a N-SC DQD "
         + "where the SC has a spinful subgap state, and the N dot "
         + "has spin degeneracy 2. This will take a while...")
-    N = 3
+    N = 10
     system = DotSystem(verbose=True)
     #system.add_dot(100,degeneracy=1,orbitals=100,isSC = False)
-    system.add_dot(150,name='dot0',degeneracy='spin',orbitals=20,isSC=False)
-    system.add_dot(150,name='dot1',degeneracy='spin',orbitals=20,isSC=False)
-    #system.add_lead(['dot0'],[20],name='lead0',level=0)
-    #system.add_lead(['dot1'],[20],name='lead1',level=0)
-    system.add_coupling(30,5,['dot0','dot1'])
+    system.add_dot(50,name='dot0',degeneracy='spin',orbitals=20,isSC=False)
+    system.add_dot(50,name='dot1',degeneracy='spin',orbitals=80,isSC=False)
+    system.add_lead(['dot0'],[10],name='lead0',level=0)
+    system.add_lead(['dot1'],[10],name='lead1',level=0)
+    system.add_coupling(20,20,['dot0','dot1'])
     print(system)
     #system.add_dot(400,name='SCdot',degeneracy=1000,orbitals=200,isSC=True)
     system.get_states(N)
     npoints = 100
-    gates = {'dot0': np.linspace(0,N-1,npoints), 'dot1': np.linspace(0,N-1,npoints)}
+    gates = {'dot0': np.linspace(0,3,npoints), 'dot1': np.linspace(0,3,npoints)}
     leverArms = [0.3,0.1]
     system.cp_stability_diagram(
         'dot0',leverArms,gates,N=N,
