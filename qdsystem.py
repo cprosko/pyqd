@@ -3,7 +3,7 @@ qdsystem:
 Package for simulating quantum dot systems with or without leads.
 
 Work flow of a qdsystem calculation:
-    1. Initialize an instance of the qdsystem class.
+    1. Initialize an instance of the DotSystem class.
     2. Add quantum dots with their corresponding charging energies
        and other properties with self.add_dot()
     3. Add tunnel couplings between dots with self.add_coupling().
@@ -14,9 +14,9 @@ Work flow of a qdsystem calculation:
 """
 
 ### TO DO:
-# 2. Optimize partitions() function
-# 3. Vectorize calculation of 'diffs' in .areNeighbours(), currently uses list comp.
-# 4. Fix spin for SC islands
+# 1. Optimize partitions() function
+# 2. Vectorize calculation of 'diffs' in .areNeighbours(), currently uses list comp.
+# 3. Fix spin for SC islands
 
 import numpy as np
 import scipy.sparse.linalg as sla
@@ -32,13 +32,12 @@ class DotSystem:
     Class for simulating systems of multiple quantum dots.
 
     Attributes:
-    dots: Sorted dictionary of properties for the system's quantum dots
-    couplings: Sorted dictionary capacitances/couplings between dots
+    objects: Dictionary of properties for the system's dots/SC islands/leads
+    states: Sorted dictionary of arrays of all possible system states, indexed
+        by the total charge (per dot if there are leads)
     leads: Sorted dictionary of leads and their properties
-    sys: kwant system for porting system properties to kwant
     verbose: whether or not to print results of calling methods
     ndots: number of dots in system
-    ncouplings: number of couplings between dots in system
     nleads: number of leads in system
     ndotssc: number of superconducting type dots
     """
@@ -84,8 +83,8 @@ class DotSystem:
         return sum([not v['isLead'] for v in self.objects.values()])
 
     @property
-    def ndotseff(self):
-        """Number of effective dots in system."""
+    def __ndotseff(self):
+        """Number of effective dots in system, including degeneracy on normal dots."""
         return len(self.__sysTemp)
 
     @property
@@ -97,6 +96,15 @@ class DotSystem:
     def nleads(self):
         """Number of leads in system."""
         return sum([v[3] for v in self.__sysTemp])
+        
+    def __cast_as_sclr(self,n):
+        """Converts length 1 arrays to scalars, and leaves scalars as is."""
+        if np.isscalar(n):
+            return n
+        elif len(n) == 1:
+            return n[0]
+        else:
+            raise Exception("Input must be an array-like of length 1 or a scalar!")
 
     def add_dot(self, Ec, name=None, degeneracy=1, orbitals=0, isSC=False):    
         """Add a quantum dot to the system.
@@ -104,9 +112,12 @@ class DotSystem:
         Keyword Arguments:
         name (str): Key name (in self.dots) of the dot
         Ec (float): Charging energy of the dot.
-        degeneracies (int or 'spin'): Orbital or spin degeneracy for each charge level.
-            If set equal to 'spin', degeneracy of 2 is added and tunnel couplings with
-            'spin flips' between dots are suppressed.
+        degeneracy (list of [str,int] or int): Orbital or spin degeneracy for each 
+            charge level. If a list is provided with a string in the first index, the 
+            string labels the type of degeneracy, eg. 'spin.' In this case, tunneling
+            will only occur to electron levels with the same quantum number on other
+            dots. If no label is given, the degeneracy is 'none' type, and tunneling
+            may occur into any quantum number of other dot's orbitals.
         orbitals (float or float list): Orbital addition energy or SC
             gap. If length is greater than one, each entry is the orbital energy for
             each successive orbital. After all orbitals are filled, subsequent orbital
@@ -122,12 +133,27 @@ class DotSystem:
             raise Exception(
                 'orbEnergies must be a scalar for superconducting islands,'
                 + ' as it corresponds to odd parity lowest energy level.')
-        if name is None: name = 'dot' + str(self.ndots)
+        if name is None:
+            name = 'dot' + str(self.ndots)
         if any([name == n for n in self.objects]):
             raise Exception("Dot or lead with name '" + name + "' is already defined.")
+        try:
+            degType = degeneracy[0]
+            deg = degeneracy[1]
+            if any(
+                [v['degeneracy'] != deg and v['degType'] == degType
+                for v in self.objects.values()]
+                ):
+                raise Exception(
+                    "Dots exist with same degeneracy labels but different "
+                    + "levels of degeneracy!")       
+        except:
+            degType = 'none'
+            deg = self.__cast_as_sclr(degeneracy)
         self.objects[name] = {
             'Ec': Ec,
-            'degeneracy': degeneracy,
+            'degeneracy': deg,
+            'degType': degType,
             'orbitals': orbitals,
             'numCouplings': 0,
             'couplings': {},
@@ -146,7 +172,8 @@ class DotSystem:
             isSC,
             False, # Dots are not leads
             orbitals, # Odd parity free energy if isSC, else list of orbital energies
-            degeneracy, # Degeneracy of orbitals (quasiparticle states) for dots (SC islands).
+            degType, # Degree of freedom corresponding to degeneracy or 'none'
+            deg, # Degeneracy of orbitals (quasiparticle states) for dots (SC islands).
             {}, # Dictionary of all dots with tunnel couplings
             {}, # Dictionary of all dots with mutual capacitances
             ]]*numEffDots)
@@ -186,10 +213,10 @@ class DotSystem:
             i1 = [i for i,v in enumerate(self.__sysTemp) if v[0] == d1]
             i2 = [i for i,v in enumerate(self.__sysTemp) if v[0] == d2]
             for i,j in zip(i1,i2):
-                self.__sysTemp[i][6].update({j: t})
-                self.__sysTemp[i][7].update({j: Em})
-                self.__sysTemp[j][6].update({i: t})
-                self.__sysTemp[j][7].update({i: Em})
+                self.__sysTemp[i][7].update({j: t})
+                self.__sysTemp[i][8].update({j: Em})
+                self.__sysTemp[j][7].update({i: t})
+                self.__sysTemp[j][8].update({i: Em})
 
         if self.verbose:
             print(
@@ -221,17 +248,20 @@ class DotSystem:
         self.objects[name] = {
             'couplings': {},
             'level': level,
-            'isSC': False, # Must be included for organization of charge states later.
             'isLead': True,
             'numCouplings': 0,
             'name': name,
         }
-        self.__sysTemp.append([name,0,False,True,level,1,{},{}]) # Add lead to internal list of system objects
+        # Add lead to internal list of system objects
+        self.__sysTemp.append([name,0,False,True,level,'none',1,{},{}])
         # Create couplings dict. so 'leads' may be searched like dots
         for i,dot in enumerate(dots):
             self.add_coupling(0,t[i],(name,dot))
         if self.verbose:
-            print("Lead with chemical potential " + str(level) + "added which couples to dots: " + str(dots))
+            print(
+                "Lead with chemical potential " + str(level) 
+                + " added which couples to dots: " + str(dots) + "."
+                )
 
     def delete(self, *names):
         """Delete dot/lead/coupling with [name].
@@ -245,14 +275,15 @@ class DotSystem:
         """
         def del_coupling(*names):
             """Deletes coupling between objects in names."""
-            if len(names) == 1:
-                name = names[0]
+            if np.isscalar(names) or len(names)==1:
+                name = self.__cast_as_sclr(names)
                 for n in [n for n in self.objects if name in self.objects[n]['couplings']]:
                     del self.objects[n]['couplings'][name]
             else:
                 for n1,n2 in permutations(*names,2):
                     del self.objects[n1]['couplings'][n2]
             self.__tunnelingHam = {}
+            self.__diagElements = {}
 
         if len(names) == 1:
             n = names[0]
@@ -262,13 +293,19 @@ class DotSystem:
                 del self.__sysTemp[i]
             # Dictionary of system states is no longer valid after object is removed
             self.states = {}
+            self.__tunnelingHam = {}
+            self.__diagElements = {}
         else:
             del_coupling(*names)
         self.__isFinalized = False
 
     def finalize(self):
-        """Port system information from .__sysTemp to dictionary of numpy arrays in .__sys"""
-        l = self.ndotseff # Number of eff. dots / leads in system
+        """Port system information from .__sysTemp to dictionary of numpy arrays in .__sys
+        
+        Translates system information to a dictionary of numpy arrays, so that vectorized
+        calculations can be carried out afterwards.
+        """
+        l = self.__ndotseff # Number of eff. dots / leads in system
         # Convert .__sysTemp to numpy array of all objects
         sys = np.array(self.__sysTemp,dtype=object) 
         # First translate each object's properties into numpy array
@@ -278,24 +315,38 @@ class DotSystem:
             'isSC': np.array(sys[:,2],dtype=bool),
             'isLead': np.array(sys[:,3],dtype=bool),
             'orb': np.array(sys[:,4],dtype=list),
-            'deg': np.array([i if i != 'spin' else 2 for i in sys[:,5]],dtype=int),
-            'spin': np.array([i if i=='spin' else 'none' for i in sys[:,5]],dtype=str),
+            'degType': np.zeros((l,2),dtype=int),
+            'deg': np.array(sys[:,6],dtype=int),
             'Em': np.zeros((l,l)),
             't': np.zeros((l,l)),
         })
-        # Appoint each spinful 'quasi'-dot with either spin 'up' or 'down'
-        for i,s in enumerate(self.__sys['spin']):
-            if self.__sys['isSC'][i]:
-                self.__sys['spin'][i] = 'SC'
-            elif s=='spin' and self.__sys['name'][i]==self.__sys['name'][i+1]:
-                self.__sys['spin'][i] = 'down'
-                self.__sys['spin'][i+1] = 'up'
+        # Extract list of distinct degeneracy types
+        degTypes = list({t for t in sys[5] if t != 'none'})
+        # Appoint labels to each degeneracy type and each electron flavor
+        # within that type.
+        for j,dt in enumerate(sys[:,5]):
+            self.__sys['degType'][j,0] = degTypes.index(dt)+1 if dt != 'none' else 0
+            self.__sys['degType'][j,1] = j % sys[6,j]
         # Next, translate couplings into numpy array in .__sys as well
         for i,j in combinations(range(l),2):
-            t = self.__sysTemp[i][6]
-            Em = self.__sysTemp[i][7]
-            self.__sys['t'][i,j] = t[j] if j in t else 0
+            t = self.__sysTemp[i][7]
+            Em = self.__sysTemp[i][8]
+            di = self.__sys['degType'][i,:]
+            dj = self.__sys['degType'][j,:]
             self.__sys['Em'][i,j] = Em[j] if j in Em else 0
+            if j in t:
+                if (
+                        # Objects have same degeneracy type that is not 'none'
+                        di[0] == dj[0] != 'none'
+                        # Coupling to SC degeneracies of same type is dealt with later
+                        and not (self.__sys['isSC'][i] or self.__sys['isSC'][j])
+                        # Objects have different quantum number here
+                        and di[1] != dj[1]
+                   ):
+                    # Remove tunneling since no quantum number flips are allowed
+                    self.__sys['t'][i,j] = 0
+                else:
+                    self.__sys['t'][i,j] = t[j]
         # Finally, symmetrize the 't' and 'Em' arrays:
         self.__sys['t'] = symmetrize(self.__sys['t'])
         self.__sys['Em'] = symmetrize(self.__sys['Em'])
@@ -305,10 +356,9 @@ class DotSystem:
         """Generate all possible charge/orbital states for given total charge N.
 
         Parameters:
-        N (int): If system has no leads:
-            Number of charges in system.
-            Otherwise:
-            Maximum number of charges per dot.
+        N (int): If system has no leads: Number of charges in system.
+            Otherwise: Maximum number of charges per dot.
+            Leads may have nleads*ndots*N charges
 
         Returns:
         numpy.array: Contains state of each (quasi-)dot/lead in same order as in
@@ -317,9 +367,9 @@ class DotSystem:
         if not self.__isFinalized:
             self.finalize()
         sys = self.__sys 
-        nObjs = self.ndotseff
+        nObjs = self.__ndotseff
         areLeads = self.nleads > 0
-        areDegenerateDots = self.ndotseff != self.ndots
+        areDegenerateDots = self.__ndotseff != self.ndots
         nMax = N*self.ndots*self.nleads if self.nleads > 0 else N
         # List of all indices of 'quasi'-dots comprising degenerate dots
         degIndices = np.array([
@@ -431,7 +481,7 @@ class DotSystem:
             EcTot += Ec*ns**2
         if N == None or N not in self.__diagElements:
             # Compute all diagonal 'expectation values' of Em to find mutual capacitance energy.
-            EmTot = np.einsum('ji,ij->j',states[...,0], sys['Em'] @ states[...,0].T)
+            EmTot = np.einsum('ji,ij->j',states[...,0], sys['Em'] @ states[...,0].T)/2
             # Compute orbital energy of SC quasiparticles then of electrons on normal dots.
             Eorb = np.einsum(
                 'i,ij',
@@ -673,7 +723,8 @@ def main():
     leverArms = [0.3,0.1]
     system.cp_stability_diagram(
         'dot0',leverArms,gates,N=N,
-        sparse = False,removeJumps=False)
+        sparse = False,removeJumps=False,
+        cmap = 'seismic_r')
     
 if __name__ == '__main__':
     main()
