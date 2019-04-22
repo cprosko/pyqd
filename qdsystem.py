@@ -260,6 +260,7 @@ class DotSystem:
             raise Exception("Lead or dot with name '" + name + "' is already defined.")
         self.objects[name] = {
             'couplings': {},
+            'twoeCouplings': {},
             'level': level,
             'isLead': True,
             'numCouplings': 0,
@@ -338,15 +339,18 @@ class DotSystem:
             'Em': np.zeros((l,l)),
             't': np.zeros((l,l)),
             'twoet': np.zeros((l,l)),
-            'u': np.array(sys[:,10],dtype=float)
+            'u': np.full((l,2),1,dtype=float)
         })
         # Appoint spin up/down to each quasi-dot, excluding SC islands
-        for j,dt in enumerate(sys[:,5]):
-            if dt == 'spin' and not sys[j,2]:
-                if j%2 == 0:
-                    self.__sys['spin'][j] = 'down'
+        for i,dt in enumerate(sys[:,5]):
+            if dt == 'spin' and not sys[i,2]:
+                if i%2 == 0:
+                    self.__sys['spin'][i] = 'down'
                 else:
-                    self.__sys['spin'][j] = 'up'
+                    self.__sys['spin'][i] = 'up'
+        # Calculate coherence factors for dots where they are
+        for i,u in [(i,u) for i,u in enumerate(sys[:,10]) if u != 0]:
+            self.__sys['u'][i] = [u,np.sqrt(1-u**2)]
         # Next, translate couplings into numpy array in .__sys as well
         for i,j in combinations(range(l),2):
             t = sys[i][7]
@@ -590,8 +594,32 @@ class DotSystem:
         ts = np.take(sys['t'],objInds)
         ham = np.zeros((nStates,nStates))
         ham[nbrs] = ts
+        # Calculate whether each dot in each state pair gained or lost an electron
+        gainOrLose = np.where(diffs[...,0] > 0, 1, 0)
+        gainOrLose[diffs[...,0] < 0] = -1
+        # Calculate whether each (quasi-)dot went from odd->even (1) or even->odd (0)
+        parityChange = np.array([
+            states[i,:,0]%2 - states[...,0]%2
+            for i in range(nStates)
+            ])
+        # Index of whether tunneling for each dot involved u or v coherence factor
+        uvIndices = (gainOrLose*parityChange + 2)//2
+        # Coherence factor products for each state pair
+        coherenceFactors = np.prod(
+            np.where(
+                diffs[...,0] != 0,
+                sys['u'][range(self.__ndotseff),uvIndices],
+                1
+            ),
+            axis=2
+        )
+        # Multiply off-diagonal elements with coherence factors:
+        ham *= coherenceFactors
         if self.verbose:
-            print('Time to generate all state combos was ' + str(time.perf_counter()-ti) + 's.')
+            print(
+                "Time to generate tunneling Hamiltonian "
+                + "was {t}s.".format(t=time.perf_counter()-ti)
+                )
         if not hamiltonian:
             nbrs[ham == 0] = False
             return nbrs
@@ -774,24 +802,24 @@ def main():
     print("Calling main() yields a stability diagram of a N-SC DQD "
         + "where the SC has a spinful subgap state, and the N dot "
         + "has spin degeneracy 2. This will take a while...")
-    N = 2
+    N = 4
     system = DotSystem(verbose=True)
     #system.add_dot(100,degeneracy=1,orbitals=100,isSC = False)
     system.add_dot(300,name='dot0',degeneracy=1,orbitals=0,spin=True,isSC=False)
     system.add_dot(100,name='dot1',degeneracy=1,orbitals=80,spin=True,isSC=True,
-        uv=[np.sqrt(0.2),np.sqrt(0.8)])
+        u=np.sqrt(0.7))
     system.add_lead(['dot0'],[10],name='lead0',level=0)
     system.add_lead(['dot1'],[10],name='lead1',level=0)
-    system.add_coupling(60,20,['dot0','dot1'],twoe=False)
+    system.add_coupling(60,40,['dot0','dot1'],twoe=False)
     print(system)
     #system.add_dot(400,name='SCdot',degeneracy=1000,orbitals=200,isSC=True)
     system.get_states(N)
-    npoints = 100
-    gates = {'dot0': np.linspace(0,N,npoints), 'dot1': np.linspace(0,N+1,npoints)}
-    leverArms = [0.01,0.5]
+    npoints = 275
+    gates = {'dot0': np.linspace(0,N,npoints), 'dot1': np.linspace(-0.5,3.25,npoints)}
+    leverArms = [0.5,0.01]
     system.cp_stability_diagram(
-        'dot0',leverArms,gates,N=N,
-        T=0,sparse=False,removeJumps=False,flipAxes=False,
+        'dot1',leverArms,gates,N=N,
+        T=0,sparse=False,removeJumps=False,flipAxes=True,
         cmap='seismic_r')
     
 if __name__ == '__main__':
