@@ -678,7 +678,7 @@ class DotSystem:
     def cp_stability_diagram(
         self,probeName,leverArms,gates,
         N=None,T=0,nLevels=None,tempTol=0.1,sparse=False,removeJumps=False,flipAxes=False,
-        **plotparams):
+        contoured=False,**plotparams):
         """Generate and plot parametric capacitance stability diagram.
         
         Given the defined qdsystem and total charge N (per dot if leads exist),
@@ -733,7 +733,7 @@ class DotSystem:
             nLevels = int(self.dimension(N)/10)
         elif T == 0:
             nLevels = 1
-        # Initialize matrix of number expectation values.
+        # Initialize matrix of number&energy expectation values.
         ns = np.zeros((len(gates[probeName]),len(gates[coupledDot]),2))
         energies = np.zeros((len(gates[probeName]),len(gates[coupledDot])))
         for i,g0 in enumerate(gates[probeName]):
@@ -781,13 +781,19 @@ class DotSystem:
             if self.verbose:
                 print("Finished row {row}/{totRows} in: {t}s.\r".format(
                     row=i+1,totRows=len(gates[probeName]),t=time.perf_counter()-ti))
-        spacing1 = abs(gates[probeName][1] - gates[probeName][0])
-        spacing2 = abs(gates[coupledDot][1] - gates[coupledDot][0])
+        # Calculate vectors to be used for directional derivative
+        detProbed = np.array([1,leverArms[1]])
+        detCoupled = np.array([leverArms[0],1])
+        # Calculate spacings
+        dx = abs(gates[probeName][1] - gates[probeName][0])
+        dy = abs(gates[coupledDot][1] - gates[coupledDot][0])
+        gradProbed = np.transpose(np.array(np.gradient(ns[...,0],dx,dy)),axes=(1,2,0))
+        gradCoupled = np.transpose(np.array(np.gradient(ns[...,1],dx,dy)),axes=(1,2,0))
         cp = (
-            1*np.diff(ns[...,0],n=1,axis=1)[0:-1,:]/spacing1
-            + leverArms[0]**2*np.diff(ns[...,1],n=1,axis=0)[:,0:-1]/spacing2
-            + leverArms[0]*np.diff(ns[...,1],n=1,axis=1)[0:-1,:]/spacing1
-            + leverArms[0]*np.diff(ns[...,0],n=1,axis=0)[:,0:-1]/spacing2
+            gradProbed @ detProbed
+            + leverArms[0]**2*gradCoupled @ detCoupled
+            + leverArms[0]*gradCoupled @ detProbed
+            + leverArms[0]*gradProbed @ detCoupled
         )
         if removeJumps:
             print(np.std(cp))
@@ -832,25 +838,25 @@ def symmetrize(mat):
     return (mat + mat.T - np.diag(mat.diagonal()))/2
 
 def main():
-    N = 4
+    N = 2
     system = DotSystem(verbose=True)
     #system.add_dot(100,degeneracy=1,orbitals=100,isSC = False)
-    system.add_dot(300,name='dot0',degeneracy=1,orbitals=0,spin=True,isSC=False)
-    system.add_dot(100,name='dot1',degeneracy=1,orbitals=80,spin=True,isSC=True,
-        u=np.sqrt(0.7))
-    system.add_lead(['dot0'],[10],name='lead0',level=0)
-    system.add_lead(['dot1'],[10],name='lead1',level=0)
-    system.add_coupling(60,40,['dot0','dot1'],twoe=False)
+    system.add_dot(130,name='dot0',degeneracy=1,orbitals=0,spin=False,isSC=False)
+    system.add_dot(100,name='dot1',degeneracy=1,orbitals=0,spin=False,isSC=False,
+        u=0)
+    system.add_lead(['dot0'],[5],name='lead0',level=0)
+    system.add_lead(['dot1'],[5],name='lead1',level=0)
+    system.add_coupling(70,10,['dot0','dot1'],twoe=False)
     print(system)
     #system.add_dot(400,name='SCdot',degeneracy=1000,orbitals=200,isSC=True)
     system.get_states(N)
-    npoints = 275
-    gates = {'dot0': np.linspace(0,N,npoints), 'dot1': np.linspace(-0.5,3.25,npoints)}
-    leverArms = [0.5,0.01]
+    npoints = 100
+    gates = {'dot0': np.linspace(0,N,npoints), 'dot1': np.linspace(0,N,npoints)}
+    leverArms = [0.1,0.5]
     system.cp_stability_diagram(
-        'dot1',leverArms,gates,N=N,
-        T=0,sparse=False,removeJumps=False,flipAxes=True,
-        cmap='seismic_r')
+        'dot0',leverArms,gates,N=N,
+        T=0,sparse=False,removeJumps=False,flipAxes=False,
+        cmap='GnBu')
     
 if __name__ == '__main__':
     main()
