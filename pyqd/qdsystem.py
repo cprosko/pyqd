@@ -10,13 +10,15 @@ Work flow of a qdsystem calculation:
     4. Add leads to dots of your choice with self.add_lead().
     5. Generate the system states for a given maximum charge
        (per dot if there are leads) with self.get_states(N).
-    6. Calculate properties of the system using other functions.
+    6. Calculate properties of the system using other functions
+       (i.e. cp_stability_diagram)
 """
 
 ### TO DO:
-# 1. Optimize partitions() function
+# 1. Optimize partitions() function.
 # 2. Vectorize calculation of 'diffs' in .areNeighbours(), currently uses list comp.
-# 3. Finish adding 2e tunnel couplings
+# 3. Finish adding 2e tunnel couplings.
+# 4. Make parity dependent tunneling work for normal (non-SC) dots.
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -46,7 +48,7 @@ class DotSystem:
         """
         Constructor for DotSystem class.
 
-        Parameters:
+        Keyword Arguments:
         verbose (bool): whether or not to print results of calling methods
         """
         # Dictionary of dots and leads and their parameters and couplings
@@ -111,9 +113,11 @@ class DotSystem:
         name=None,degeneracy=1,orbitals=0,u=0,isSC=False,spin=False):    
         """Add a quantum dot to the system.
 
+        Parameters:
+        Ec (float): Charging energy of the dot.
+
         Keyword Arguments:
         name (str): Key name (in self.dots) of the dot
-        Ec (float): Charging energy of the dot.
         degeneracy (int): Orbital or spin degeneracy for each charge level.
             If spin==True, this is the degeneracy PER spin.
         orbitals (float or float list): Orbital addition energy or SC
@@ -180,14 +184,15 @@ class DotSystem:
     def add_coupling(self, Em, t, dotnames,twoe=False):
         """Add tunnel coupling or mutual capacitance between two dots.
         
-        Creates an entry in self.couplings containing a set of dots involved in the
-        coupling in the first index, and a dictionary of properties of the coupling
-        in the second index.
+        Creates an entry in each related dot's self.objects entry containing
+        information about which dots each is coupled to, and with what tunnel
+        coupling and mutual capacitance. Also adds this information to
+        self.__sysTemp.
 
         Parameters:
-        Em (float): Mutual capacitance energy (in ueV) between the two dots.
+        Em (float): Mutual capacitance energy between the two dots.
             Em = (e^2/Cm) / (C1*C2/Cm - 1)
-        t (float): Tunnel coupling between the two dots (in ueV).
+        t (float): Tunnel coupling energy between the two dots.
         dotnames (tuple or set of strings): List of names of dots to be coupled.
 
         Keyword Arguments:
@@ -248,11 +253,8 @@ class DotSystem:
         t (list): Tunnel couplings (t's) to dots, in same order as dots list
         
         Keyword Arguments:
-        name (str): Key to access entry for this lead in self.leads
-        level (float): Chemical potential (in ueV) of electrons in this lead
-
-        Defaults:
-        Creates lead with chemical potential zero.
+        name (str): Key to access entry for this lead in self.objects
+        level (float): Chemical potential of electrons in this lead
         """
         if name == None:
             name = 'lead' + str(self.nleads)
@@ -363,7 +365,7 @@ class DotSystem:
         self.__isFinalized = True
         
     def get_states(self, N):
-        """Generate all possible charge/orbital states for given total charge N.
+        """Generate all possible charge/orbital/spin states for given total charge N.
 
         Parameters:
         N (int): If system has no leads: Number of charges in system.
@@ -371,8 +373,10 @@ class DotSystem:
             Leads may have nleads*ndots*N charges
 
         Returns:
-        numpy.array: Contains state of each (quasi-)dot/lead in same order as in
-            self.__sys.
+        numpy.ndarray: Contains state of each (quasi-)dot/lead in same order as in
+            self.__sys. First index of each state is object charge, second is integer
+            representing orbital or spin quantum number, last one is 1 (if spinful) or
+            0 (not spinful).
         """
         if not self.__isFinalized:
             self.finalize()
@@ -423,7 +427,7 @@ class DotSystem:
                 ]
 
         def dotChargeIsNotN(charges,N):
-            """Returns whether or not dot charges are N, ignoring leads."""
+            """Returns whether or not dot charges are above N, ignoring leads."""
             return np.any(charges[sys['isLead']==False] > N)
 
         def partitions(n,k,NInput,l=0,kc=None):
@@ -476,7 +480,7 @@ class DotSystem:
         return self.states[N]
         
     def dimension(self, N):
-        """Return dimension (int) of Hilbert space for a given number of charges N in the system."""
+        """Return dimension of Hilbert space for a given number of charges N in the system."""
         if N not in self.states:
             self.get_states(N)
         return len(self.states[N][:,0,0])
@@ -493,6 +497,11 @@ class DotSystem:
         gates (dict): Reduced gate voltages for each object in system.
             note: Leads should have 'gate' voltage 0 due to limitations
             in simulation. 
+
+        Keyword Arguments:
+        N (int): Total number of charges in the system (no leads) or max.
+            charges per dot (if there are leads). If N == None, the highest
+            N for which states have been already calculated is used.
 
         Returns:
         E (ndarray): numpy array of onsite energy corresponding to each state.
@@ -540,10 +549,11 @@ class DotSystem:
         of electrons from one quasiparticle state to another.
         
         Parameters:
-        states (ndarray): Array where each row is a possible state
+        states (ndarray): Array where each row is a possible state.
 
         Keyword Arguments:
-        hamiltonian (bool): Whether or not to return tunneling matrix
+        hamiltonian (bool): Whether or not to return tunneling matrix or bool
+            matrix of which states have non-zero tunnel coupling.
         
         Returns:
         (ndarray): Array with size equal to the number of input states squared,
@@ -677,9 +687,32 @@ class DotSystem:
         number expectation values of the two objects whose voltages are swept.
         
         Parameters:
+        probeName (str): Dot whose parametric capacitance is to be plotted. Must be
+            one of the dots in 'gates' whose voltage is swept.
+        leverArms (list of 2 floats): Contains lever arm of probed dot to the other
+            dot whose voltage is swept in its first index, and the other swept voltage's
+            lever arm to the probed dot in the second index.
+        gates (dict): Contains voltage settings for all (non-lead) objects, two of which 
+            should be a list/array of reduced voltages to be swept over.
         
         Keyword Arguments:
-        
+        N (int): Total charge in system, or total charge per dot if leads are present.
+            If set equal to none, the largest N for which states have already been
+            calculated is used.
+        T (float): k_b*T, in relative units. Thermal expectation values are used if T!=0
+            including nLevels additional states, or a number determined relative to the system
+            size by default. If T==0, only the ground state is considered.
+        nLevels (int): Number of levels (ground & excited) to include in thermal averages, if
+            T != 0.
+        tempTol (float between 0 and 1): Thermal probability cutoff for states considered, above
+            which an exception is raised.
+        sparse (bool): Whether or not to use sparse, or regular diagonalization.
+        removeJumps (bool): Whether or not to take large jump discontinuities in C_p and set them
+            equal to zero. Sets any value more than two standard deviations away from the mean
+            equal to zero.
+        flipAxes (bool): Whether or not to flip x and y axes of produced colormaps. Otherwise,
+            probed dot gate voltage is placed on the x axis.
+        plotparams (kwargs): Keyword arguments to be passed to pcolormesh when plotting colormaps.
         """
         if not self.__isFinalized:
             self.finalize()
@@ -799,9 +832,6 @@ def symmetrize(mat):
     return (mat + mat.T - np.diag(mat.diagonal()))/2
 
 def main():
-    print("Calling main() yields a stability diagram of a N-SC DQD "
-        + "where the SC has a spinful subgap state, and the N dot "
-        + "has spin degeneracy 2. This will take a while...")
     N = 4
     system = DotSystem(verbose=True)
     #system.add_dot(100,degeneracy=1,orbitals=100,isSC = False)
