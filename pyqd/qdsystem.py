@@ -19,6 +19,7 @@ Work flow of a qdsystem calculation:
 # 2. Vectorize calculation of 'diffs' in .areNeighbours(), currently uses list comp.
 # 3. Finish adding 2e tunnel couplings.
 # 4. Make parity dependent tunneling work for normal (non-SC) dots.
+# 5. FIX MUTUAL CAPACITANCE!!!
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -58,7 +59,7 @@ class DotSystem:
         # Dictionary of all tunneling Hamiltonians, with N as key
         self.__tunnelingHam = {}
         # Dictionary of all orbital + mutual capacitance diagonals, with N as key
-        self.__diagElements = {}
+        self.__orbElements = {}
         # Dictionary containing properties from .__sysTemp in numpy array format
         self.__sys = {}   
         # List containing system information in mutable list format 
@@ -304,7 +305,7 @@ class DotSystem:
                     del self.objects[n1]['couplings'][n2]
                     self.objects[n1]['numCouplings'] -= 1
             self.__tunnelingHam = {}
-            self.__diagElements = {}
+            self.__orbElements = {}
 
         if len(names) == 1:
             n = names[0]
@@ -315,7 +316,7 @@ class DotSystem:
             # Dictionary of system states is no longer valid after object is removed
             self.states = {}
             self.__tunnelingHam = {}
-            self.__diagElements = {}
+            self.__orbElements = {}
         else:
             del_coupling(*names)
         self.__isFinalized = False
@@ -338,7 +339,7 @@ class DotSystem:
             'orb': np.array(sys[:,4],dtype=list),
             'spin': np.array(sys[:,5],dtype=str),
             'deg': np.array(sys[:,6],dtype=int),
-            'Em': np.zeros((l,l)),
+            'Em': {},
             't': np.zeros((l,l)),
             'twoet': np.zeros((l,l)),
             'u': np.full((l,2),1,dtype=float)
@@ -354,14 +355,15 @@ class DotSystem:
         for i,u in [(i,u) for i,u in enumerate(sys[:,10]) if u != 0]:
             self.__sys['u'][i] = [u,np.sqrt(1-u**2)]
         # Next, translate couplings into numpy array in .__sys as well
-        for i,j in combinations(range(l),2):
+        for i,n1 in enumerate(self.__sys['name']):
             t = sys[i][7]
             Em = sys[i][8]
-            self.__sys['Em'][i,j] = Em[j] if j in Em else 0
-            self.__sys['t'][i,j] = t[j] if j in t else 0
-        # Finally, symmetrize the 't' and 'Em' arrays:
+            self.__sys['Em'][n1] = {}
+            for j,n2 in enumerate(self.__sys['name']):
+                self.__sys['Em'][n1][n2] = Em[j] if j in Em else 0
+                self.__sys['t'][i,j] = t[j] if j in t else 0
+        # Finally, symmetrize the 't' array:
         self.__sys['t'] = symmetrize(self.__sys['t'])
-        self.__sys['Em'] = symmetrize(self.__sys['Em'])
         self.__isFinalized = True
         
     def get_states(self, N):
@@ -509,19 +511,19 @@ class DotSystem:
         if not self.__isFinalized:
             self.finalize()
         sys = self.__sys
-        numStates = len(states[...,0])
-        # Compute total charging energy
-        EcTot = np.zeros(numStates)
-        for n in gates:
-            Ec = sys['Ec'][sys['name']==n][0]
-            # Must sum degenerate charges on quasi-dots before squaring, since
-            # they correspond to the same 'real' dot
-            ns = np.sum(states[:,sys['name']==n,0],axis=1) - gates[n]
-            EcTot += Ec*ns**2
-        if N == None or N not in self.__diagElements:
-            # Compute all diagonal 'expectation values' of Em to find mutual capacitance energy.
-            EmTot = np.einsum('ji,ij->j',states[...,0], sys['Em'] @ states[...,0].T)/2
-            # Compute orbital energy of SC quasiparticles then of electrons on normal dots.
+        nStates = len(states[:,0,0])
+        # Compute total charging energy and mutual capacitance energy
+        gs = np.array(list(gates))
+        ns = np.array([np.sum(states[:,sys['name']==n,0],axis=1) - gates[n] for n in gs]).T
+        EcTot = np.sum([sys['Ec'][sys['name']==n][0]*ns[:,i]**2 for i,n in enumerate(gs)],axis=0)
+        EmTot = np.zeros(nStates)
+        for i,n1 in enumerate(gs):
+            Em = sys['Em'][n1]
+            EmTot += np.sum([Em[n2]*ns[:,i]*ns[:,j] for j,n2 in enumerate(gs)],axis=0)
+        #EmTot = np.einsum('ji,ij->j',ns, sys['Em'][sys['name'][gs],sys['name'][gs]] @ ns.T)/2
+        # Orbital matrix element terms only need to be calculated once.
+        if N == None or N not in self.__orbElements:
+            # Compute orbital energy of SC quasiparticles then of electrons on normal dots. 
             Eorb = np.einsum(
                 'i,ij',
                 np.array(np.where(sys['isSC'],sys['orb'],0),dtype=float),
@@ -535,11 +537,10 @@ class DotSystem:
                 ],
                 axis = 0
                 )
-            Eother = EmTot + Eorb
-            self.__diagElements[N] = Eother
+            self.__orbElements[N] = Eorb
         else:
-            Eother = self.__diagElements[N]
-        return EcTot + Eother
+            Eorb = self.__orbElements[N]
+        return EcTot + EmTot + Eorb
 
     def are_neighbours(self, states, N = None, hamiltonian=False):
         """Find which in set of states are nearest neighbours.
@@ -718,16 +719,23 @@ class DotSystem:
             self.finalize()
         # Generate system states if necessary
         self.__choose_states(N)
+        dim = self.dimension(N)
+        sys = self.__sys
         # Pick out the 'dot' names for the two voltages that are varying:
         gvar = np.array([n for n,g in gates.items() if not np.isscalar(g) and len(g) > 1])
         if len(gvar) != 2:
             raise Exception('Two gates must be swept over at a time!')
         if probeName not in gvar:
-            raise Exception('Parametric capacitance can only be probed from a gate which varies!')
+            raise Exception(
+                "Parametric capacitance can only be probed from a "
+                + "gate which varies!"
+                )
+        if any([n not in gates for n in sys['name'][sys['isLead']==False]]):
+            raise Exception("Gate voltages must be supplied for all dots in the system!")
         coupledDot = gvar[gvar != probeName][0]
-        # Generate number operators for two gates with lever arms
-        numOp1 = self.get_num_op(probeName,N)
-        numOp2 = self.get_num_op(coupledDot,N)
+        # Generate number operator diagonals for two gates with lever arms
+        numOp1 = np.diag(self.get_num_op(probeName,N))
+        numOp2 = np.diag(self.get_num_op(coupledDot,N))
         # If temperature != 0, make sure more than one eigenvalue of hamiltonian is obtained
         if T != 0 and nLevels == None:
             nLevels = int(self.dimension(N)/10)
@@ -736,21 +744,39 @@ class DotSystem:
         # Initialize matrix of number&energy expectation values.
         ns = np.zeros((len(gates[probeName]),len(gates[coupledDot]),2))
         energies = np.zeros((len(gates[probeName]),len(gates[coupledDot])))
+
+        # Get Hamiltonian once to see if it is diagonal:
+        gs = {k: (v if np.isscalar(v) else v[0]) for k,v in gates.items()}
+        h = self.get_hamiltonian(N,gs)
+        isDiag = isDiagonal(h)
         for i,g0 in enumerate(gates[probeName]):
-            ti = time.perf_counter()
+            ti1 = time.perf_counter()
+            t2 = 0
+            t3 = 0
+            t4 = 0
             for j,g1 in enumerate(gates[coupledDot]):
                 # Calculate and generate Hamiltonian for each voltage combination
                 gs = dict(gates)
                 gs.update({probeName: g0+leverArms[0]*g1, coupledDot: g1+leverArms[1]*g0})
+                ti2 = time.perf_counter()
                 h = self.get_hamiltonian(N,gs)
-                if sparse:
+                t2 += time.perf_counter() - ti2
+                ti3 = time.perf_counter()
+                if isDiag:
+                    dh = np.diag(h)
+                    inds = np.argsort(dh)[0:nLevels]
+                    e0 = dh[inds]
+                    v0 = np.zeros((dim,nLevels))
+                    v0[np.array([range(nLevels),inds]).T] = 1
+                elif sparse:
                     e,v = eigsh(h,k=nLevels,which='SM')
                     v0 = v
                     e0 = e
                 else:
-                    e,v = eigh(h,eigvals=(0,nLevels-1))
+                    e,v = np.linalg.eigh(h)
                     v0 = v[:,0:nLevels]
                     e0 = e[0:nLevels]
+                t3 += time.perf_counter() - ti3
                 if T != 0:
                     # Calculate partition function:
                     Z = np.sum(np.exp(-e0/T))
@@ -775,29 +801,18 @@ class DotSystem:
                         for i in range(nLevels)
                         ])
                 else:
+                    ti4 = time.perf_counter()
                     energies[i,j] = e0
-                    ns[i,j,0] = v0.T @ numOp1 @ v0
-                    ns[i,j,1] = v0.T @ numOp2 @ v0
+                    ns[i,j,0] = v0.T @ (v0.T * numOp1).T
+                    ns[i,j,1] = v0.T @ (v0.T * numOp2).T
+                    t4 += time.perf_counter()-ti4
+
             if self.verbose:
-                print("Finished row {row}/{totRows} in: {t}s.\r".format(
-                    row=i+1,totRows=len(gates[probeName]),t=time.perf_counter()-ti))
-        # Calculate vectors to be used for directional derivative
-        detProbed = np.array([1,leverArms[1]])
-        detCoupled = np.array([leverArms[0],1])
-        # Calculate spacings
-        dx = abs(gates[probeName][1] - gates[probeName][0])
-        dy = abs(gates[coupledDot][1] - gates[coupledDot][0])
-        gradProbed = np.transpose(np.array(np.gradient(ns[...,0],dx,dy)),axes=(1,2,0))
-        gradCoupled = np.transpose(np.array(np.gradient(ns[...,1],dx,dy)),axes=(1,2,0))
-        cp = (
-            gradProbed @ detProbed
-            + leverArms[0]**2*gradCoupled @ detCoupled
-            + leverArms[0]*gradCoupled @ detProbed
-            + leverArms[0]*gradProbed @ detCoupled
-        )
-        if removeJumps:
-            print(np.std(cp))
-            cp[cp - np.mean(cp) > 2*np.std(cp)] = 0
+                print("Finished row {row}/{totRows} in: {t}s.".format(
+                    row=i+1,totRows=len(gates[probeName]),t=time.perf_counter()-ti1))
+                print("Calculating Hamiltonians: {t}s".format(t=t2))
+                print("Diagonalizing Hamiltonians: {t}s\r".format(t=t3))
+                print("Calculating matrix products: {t}s.".format(t=t4))
         if flipAxes:
             xAxis = gates[coupledDot]
             yAxis = gates[probeName]
@@ -806,57 +821,93 @@ class DotSystem:
         else:
             xAxis = gates[probeName]
             yAxis = gates[coupledDot]
-            cp = cp.T
             energies = energies.T
             ns0 = ns[...,0].T
             ns1 = ns[...,1].T
-        fig,axs = plt.subplots(2,2,sharex=True,sharey=True)
-        ax = axs[0,0]
-        im = ax.pcolormesh(xAxis,yAxis,cp,**plotparams)
-        fig.colorbar(im,ax=ax,label='C_p')
-        ax.set_xlabel(gvar[0] + ' reduced voltage')
-        ax.set_ylabel(gvar[1] + ' reduced voltage')
-        ax = axs[0,1]
-        im = ax.pcolormesh(xAxis,yAxis,energies,**plotparams)
-        fig.colorbar(im,ax=ax,label='GS Energy (rel. units)')
-        ax.set_xlabel(gvar[0] + ' reduced voltage')
-        ax.set_ylabel(gvar[1] + ' reduced voltage')
-        ax = axs[1,0]
-        im = ax.pcolormesh(xAxis,yAxis,ns0,**plotparams)
-        fig.colorbar(im,ax=ax,label='<n> (probed dot)')
-        ax.set_xlabel(gvar[0] + ' reduced voltage')
-        ax.set_ylabel(gvar[1] + ' reduced voltage')
-        ax = axs[1,1]
-        im = ax.pcolormesh(xAxis,yAxis,ns1,**plotparams)
-        fig.colorbar(im,ax=ax,label='<n> (other dot)')
-        ax.set_xlabel(gvar[0] + ' reduced voltage')
-        ax.set_ylabel(gvar[1] + ' reduced voltage')
+        if contoured:
+            contours = (
+                np.diff(ns0+ns1,axis=0)[:,0:-1]
+                + np.diff(ns0+ns1,axis=1)[0:-1,:] 
+                - np.abs(np.diff(ns0-ns1,axis=0)[:,0:-1])/2
+                - np.abs(np.diff(ns0-ns1,axis=1)[0:-1,:])/2
+            )
+            cpos = np.where(contours>0,1,0)
+            cneg = np.where(contours<0,1,0)
+            thickness = 4
+            plt.contour(xAxis[0:-1],yAxis[0:-1],cpos,1,colors=['black'],antialiased=True,linewidths=thickness)
+            plt.contour(xAxis[0:-1],yAxis[0:-1],cneg,1,colors=['red'],antialiased=True,linewidths=thickness)
+            plt.xlabel('{g} reduced voltage'.format(g=probeName))
+            plt.ylabel('{g} reduced voltage'.format(g=coupledDot))
+        else:
+            # Calculate vectors to be used for directional derivative
+            detProbed = np.array([1,leverArms[1]])
+            detCoupled = np.array([leverArms[0],1])
+            # Calculate spacings
+            dx = abs(gates[probeName][1] - gates[probeName][0])
+            dy = abs(gates[coupledDot][1] - gates[coupledDot][0])
+            gradProbed = np.transpose(np.array(np.gradient(ns[...,0],dx,dy)),axes=(1,2,0))
+            gradCoupled = np.transpose(np.array(np.gradient(ns[...,1],dx,dy)),axes=(1,2,0))
+            
+            cp = (
+                gradProbed @ detProbed
+                + leverArms[0]**2*gradCoupled @ detCoupled
+                + leverArms[0]*gradCoupled @ detProbed
+                + leverArms[0]*gradProbed @ detCoupled
+            )
+            if not flipAxes:
+                cp = cp.T
+            if removeJumps:
+                print(np.std(cp))
+                cp[cp - np.mean(cp) > 2*np.std(cp)] = 0
+            fig,axs = plt.subplots(2,2,sharex=True,sharey=True)
+            ax = axs[0,0]
+            im = ax.pcolormesh(xAxis,yAxis,cp,**plotparams)
+            fig.colorbar(im,ax=ax,label='C_p')
+            ax.set_xlabel(gvar[0] + ' reduced voltage')
+            ax.set_ylabel(gvar[1] + ' reduced voltage')
+            ax = axs[0,1]
+            im = ax.pcolormesh(xAxis,yAxis,energies,**plotparams)
+            fig.colorbar(im,ax=ax,label='GS Energy (rel. units)')
+            ax.set_xlabel(gvar[0] + ' reduced voltage')
+            ax.set_ylabel(gvar[1] + ' reduced voltage')
+            ax = axs[1,0]
+            im = ax.pcolormesh(xAxis,yAxis,ns0,**plotparams)
+            fig.colorbar(im,ax=ax,label='<n> (probed dot)')
+            ax.set_xlabel(gvar[0] + ' reduced voltage')
+            ax.set_ylabel(gvar[1] + ' reduced voltage')
+            ax = axs[1,1]
+            im = ax.pcolormesh(xAxis,yAxis,ns1,**plotparams)
+            fig.colorbar(im,ax=ax,label='<n> (other dot)')
+            ax.set_xlabel(gvar[0] + ' reduced voltage')
+            ax.set_ylabel(gvar[1] + ' reduced voltage')
         plt.show()
         
 def symmetrize(mat):
     """Symmetrizes a numpy array like object and halves its entries"""
     return (mat + mat.T - np.diag(mat.diagonal()))/2
 
+def isDiagonal(mat):
+    """Returns bool of whether or not matrix is diagonal."""
+    return np.count_nonzero(mat - np.diag(np.diag(mat)))  == 0
+
 def main():
     N = 2
     system = DotSystem(verbose=True)
-    #system.add_dot(100,degeneracy=1,orbitals=100,isSC = False)
-    system.add_dot(130,name='dot0',degeneracy=1,orbitals=0,spin=False,isSC=False)
-    system.add_dot(100,name='dot1',degeneracy=1,orbitals=0,spin=False,isSC=False,
-        u=0)
-    system.add_lead(['dot0'],[5],name='lead0',level=0)
-    system.add_lead(['dot1'],[5],name='lead1',level=0)
-    system.add_coupling(70,10,['dot0','dot1'],twoe=False)
+    system.add_dot(130,name='dot0',degeneracy=1,orbitals=0,spin=True,isSC=False)
+    system.add_dot(100,name='dot1',degeneracy=1,orbitals=0,spin=False,isSC=False)
+    system.add_lead(['dot0'],[0],name='lead0',level=0)
+    system.add_lead(['dot1'],[0],name='lead1',level=0)
+    system.add_coupling(60,0,['dot0','dot1'],twoe=False)
     print(system)
     #system.add_dot(400,name='SCdot',degeneracy=1000,orbitals=200,isSC=True)
     system.get_states(N)
-    npoints = 100
+    npoints = 2500
     gates = {'dot0': np.linspace(0,N,npoints), 'dot1': np.linspace(0,N,npoints)}
-    leverArms = [0.1,0.5]
+    leverArms = [0,0]
     system.cp_stability_diagram(
         'dot0',leverArms,gates,N=N,
-        T=0,sparse=False,removeJumps=False,flipAxes=False,
-        cmap='GnBu')
+        T=0,sparse=False,removeJumps=False,
+        flipAxes=False,contoured=True,cmap='BuGn')
     
 if __name__ == '__main__':
     main()
