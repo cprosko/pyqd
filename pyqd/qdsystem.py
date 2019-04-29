@@ -226,15 +226,16 @@ class DotSystem:
             # Update self.__sysTemp with coupling information
             i1 = [i for i,v in enumerate(self.__sysTemp) if v[0] == d1]
             i2 = [i for i,v in enumerate(self.__sysTemp) if v[0] == d2]
-            for i,j in zip(i1,i2):
-                if twoe:
-                    self.__sysTemp[i][9].update({j: t})
-                    self.__sysTemp[j][9].update({i: t})
-                else:
-                    self.__sysTemp[i][7].update({j: t})
-                    self.__sysTemp[j][7].update({i: t})
-                self.__sysTemp[i][8].update({j: Em})
-                self.__sysTemp[j][8].update({i: Em})
+            for i in i1:
+                for j in i2:
+                    if twoe:
+                        self.__sysTemp[i][9].update({j: t})
+                        self.__sysTemp[j][9].update({i: t})
+                    else:
+                        self.__sysTemp[i][7].update({j: t})
+                        self.__sysTemp[j][7].update({i: t})
+                    self.__sysTemp[i][8].update({j: Em})
+                    self.__sysTemp[j][8].update({i: Em})
 
         if self.verbose:
             print(
@@ -355,12 +356,15 @@ class DotSystem:
         for i,u in [(i,u) for i,u in enumerate(sys[:,10]) if u != 0]:
             self.__sys['u'][i] = [u,np.sqrt(1-u**2)]
         # Next, translate couplings into numpy array in .__sys as well
+        for n in self.__sys['name']:
+            self.__sys['Em'][n] = {}
         for i,n1 in enumerate(self.__sys['name']):
             t = sys[i][7]
             Em = sys[i][8]
-            self.__sys['Em'][n1] = {}
             for j,n2 in enumerate(self.__sys['name']):
+                self.__sys['Em']
                 self.__sys['Em'][n1][n2] = Em[j] if j in Em else 0
+                self.__sys['Em'][n2][n1] = Em[j] if j in Em else 0
                 self.__sys['t'][i,j] = t[j] if j in t else 0
         # Finally, symmetrize the 't' array:
         self.__sys['t'] = symmetrize(self.__sys['t'])
@@ -519,7 +523,7 @@ class DotSystem:
         EmTot = np.zeros(nStates)
         for i,n1 in enumerate(gs):
             Em = sys['Em'][n1]
-            EmTot += np.sum([Em[n2]*ns[:,i]*ns[:,j] for j,n2 in enumerate(gs)],axis=0)
+            EmTot += np.sum([Em[n2]*ns[:,i]*ns[:,j] for j,n2 in enumerate(gs)],axis=0)/2
         #EmTot = np.einsum('ji,ij->j',ns, sys['Em'][sys['name'][gs],sys['name'][gs]] @ ns.T)/2
         # Orbital matrix element terms only need to be calculated once.
         if N == None or N not in self.__orbElements:
@@ -773,7 +777,7 @@ class DotSystem:
                     v0 = v
                     e0 = e
                 else:
-                    e,v = np.linalg.eigh(h)
+                    e,v = eigh(h)
                     v0 = v[:,0:nLevels]
                     e0 = e[0:nLevels]
                 t3 += time.perf_counter() - ti3
@@ -838,22 +842,39 @@ class DotSystem:
             plt.contour(xAxis[0:-1],yAxis[0:-1],cneg,1,colors=['red'],antialiased=True,linewidths=thickness)
             plt.xlabel('{g} reduced voltage'.format(g=probeName))
             plt.ylabel('{g} reduced voltage'.format(g=coupledDot))
+            # For plotting multi-color CSD:
+            # fig,axs = plt.subplots(2)
+            # ax = axs[0]
+            # ax.pcolormesh(xAxis,yAxis,ns0,alpha=1,cmap='Greens')
+            # ax = axs[1]
+            # ax.pcolormesh(xAxis,yAxis,ns1,alpha=1,cmap='Blues')
         else:
             # Calculate vectors to be used for directional derivative
-            detProbed = np.array([1,leverArms[1]])
-            detCoupled = np.array([leverArms[0],1])
+            # detProbed = np.array([1,leverArms[1]])
+            # detCoupled = np.array([leverArms[0],1])
             # Calculate spacings
             dx = abs(gates[probeName][1] - gates[probeName][0])
-            dy = abs(gates[coupledDot][1] - gates[coupledDot][0])
-            gradProbed = np.transpose(np.array(np.gradient(ns[...,0],dx,dy)),axes=(1,2,0))
-            gradCoupled = np.transpose(np.array(np.gradient(ns[...,1],dx,dy)),axes=(1,2,0))
-            
-            cp = (
-                gradProbed @ detProbed
-                + leverArms[0]**2*gradCoupled @ detCoupled
-                + leverArms[0]*gradCoupled @ detProbed
-                + leverArms[0]*gradProbed @ detCoupled
-            )
+            # dy = abs(gates[coupledDot][1] - gates[coupledDot][0])
+            # gradProbed = np.transpose(np.array(np.gradient(ns[...,0],dx,dy)),axes=(1,2,0))
+            # gradCoupled = np.transpose(np.array(np.gradient(ns[...,1],dx,dy)),axes=(1,2,0))
+            # EcProbed = self.__sys['Ec']
+            # For small C_m, we have C_m = e^2Em/Ec1Ec2
+            # So C_{ij}/C_{j} = E_m^{ij}/E_{ci} in general
+            EcProbed = self.objects[probeName]['Ec']
+            EcCoupled = self.objects[probeName]['Ec']
+            EmProbed = list((self.__sys['Em'][probeName].values()))
+            EmCoupled = list((self.__sys['Em'][coupledDot].values()))
+            effLever1 = 1 - sum(EmProbed)/EcProbed
+            effLever2 = leverArms[0]*(1 - sum(EmCoupled)/EcCoupled)
+            # C_p is given by \sum_i alpha_i(1-\sum_j(C_ij/C_j))*dn_i/dV_g
+            # Where V_g is voltage of probed gate
+            cp = effLever1*np.diff(ns0,axis=0)/dx + effLever2*np.diff(ns1,axis=0)/dx
+            # cp = (
+            #     gradProbed @ detProbed
+            #     + leverArms[0]**2*gradCoupled @ detCoupled
+            #     + leverArms[0]*gradCoupled @ detProbed
+            #     + leverArms[0]*gradProbed @ detCoupled
+            # )
             if not flipAxes:
                 cp = cp.T
             if removeJumps:
@@ -888,26 +909,25 @@ def symmetrize(mat):
 
 def isDiagonal(mat):
     """Returns bool of whether or not matrix is diagonal."""
-    return np.count_nonzero(mat - np.diag(np.diag(mat)))  == 0
+    return np.count_nonzero(mat - np.diag(np.diag(mat))) == 0
 
 def main():
-    N = 2
+    N = 4
     system = DotSystem(verbose=True)
-    system.add_dot(130,name='dot0',degeneracy=1,orbitals=0,spin=True,isSC=False)
-    system.add_dot(100,name='dot1',degeneracy=1,orbitals=0,spin=False,isSC=False)
-    system.add_lead(['dot0'],[0],name='lead0',level=0)
-    system.add_lead(['dot1'],[0],name='lead1',level=0)
-    system.add_coupling(60,0,['dot0','dot1'],twoe=False)
+    system.add_dot(350,name='dot0',degeneracy=1,orbitals=0,spin=True,isSC=False)
+    system.add_dot(100,name='dot1',degeneracy=1,orbitals=70,spin=True,isSC=True,u=np.sqrt(0.7))
+    system.add_lead(['dot0'],[10],name='lead0',level=0)
+    system.add_lead(['dot1'],[10],name='lead1',level=0)
+    system.add_coupling(60,20,['dot0','dot1'],twoe=False)
     print(system)
-    #system.add_dot(400,name='SCdot',degeneracy=1000,orbitals=200,isSC=True)
     system.get_states(N)
-    npoints = 2500
+    npoints = 200
     gates = {'dot0': np.linspace(0,N,npoints), 'dot1': np.linspace(0,N,npoints)}
-    leverArms = [0,0]
+    leverArms = [0.2,0.05]
     system.cp_stability_diagram(
-        'dot0',leverArms,gates,N=N,
+        'dot1',leverArms,gates,N=N,
         T=0,sparse=False,removeJumps=False,
-        flipAxes=False,contoured=True,cmap='BuGn')
+        flipAxes=True,contoured=False,cmap='viridis')
     
 if __name__ == '__main__':
     main()
