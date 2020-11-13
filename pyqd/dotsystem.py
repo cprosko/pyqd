@@ -8,6 +8,7 @@ statistics.
 import numpy as np
 
 from .quantumdot import QuantumDot, SuperconductingIsland, QuasiLead
+from scipy.special import binom
 
 
 class DotSystem:
@@ -30,7 +31,11 @@ class DotSystem:
     def dots(self):
         return self._dots
 
-    def initialize_coupling(self, dotname,amplitude=0):
+    @property
+    def numdots(self):
+        return len(self._dots.keys())
+
+    def initialize_coupling(self, dotname, amplitude=0):
         existing_dot_names = [k for k in self._dots.keys() if k != dotname]
         for edn in existing_dot_names:
             self.couplings(dotname, edn, amplitude)
@@ -61,7 +66,32 @@ class DotSystem:
                                  "DotSystem.add_dot!"))
         else:
             dot = QuantumDot(*args, **kwargs)
-        self.attach_dot(dot) 
+        self.attach_dot(dot)
+        
+    def num_states(self, max_charge=None, charge_bounds=None,
+                   is_floating=True):
+        if charge_bounds is None:
+            if max_charge is None:
+                raise Exception(("Either charge bounds or max charge or both"
+                                 "must be provided!"))
+            # Total number of states is sum over the number for all possible
+            # total charges.
+            if not is_floating:
+                return sum([binom(charge - 1, self.numdots)
+                            for charge in range(max_charge)])
+            # Equivalent to problem of distributing 'max_charge' balls into
+            # 'self.numdots' boxes.
+            return binom(max_charge - 1, self.numdots - 1)
+        if (max_charge is not None
+                and max_charge < sum([min(bound) for bound in charge_bounds])):
+            raise Exception(("max_charge is too small to satisfy charge"
+                             " bounds!"))
+        if not is_floating:
+            if max_charge is None:
+                # All possible charges for each dot within bounds are allowed.
+                return np.prod([max(bound) - min(bound) + 1
+                                for bound in charge_bounds])
+        return 0
     pass
 
 
