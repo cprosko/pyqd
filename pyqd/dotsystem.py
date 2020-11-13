@@ -8,6 +8,7 @@ statistics.
 import numpy as np
 
 from .quantumdot import QuantumDot, SuperconductingIsland, QuasiLead
+from .utilities import is_iterable
 from scipy.special import binom
 
 
@@ -67,32 +68,31 @@ class DotSystem:
         else:
             dot = QuantumDot(*args, **kwargs)
         self.attach_dot(dot)
-        
-    def num_states(self, max_charge=None, charge_bounds=None,
-                   is_floating=True):
-        if charge_bounds is None:
-            if max_charge is None:
-                raise Exception(("Either charge bounds or max charge or both"
-                                 "must be provided!"))
-            # Total number of states is sum over the number for all possible
-            # total charges.
+
+    @staticmethod
+    def num_states(max_charge, is_floating=False, numdots=None,
+                   floating_charge=None):
+        if is_iterable(max_charge):
+            if numdots is not None:
+                raise Exception(("Number of dots is already specified by "
+                                 "length of max_charge iterable!"))
             if not is_floating:
-                return sum([binom(charge - 1, self.numdots)
-                            for charge in range(max_charge)])
-            # Equivalent to problem of distributing 'max_charge' balls into
-            # 'self.numdots' boxes.
-            return binom(max_charge - 1, self.numdots - 1)
-        if (max_charge is not None
-                and max_charge < sum([min(bound) for bound in charge_bounds])):
-            raise Exception(("max_charge is too small to satisfy charge"
-                             " bounds!"))
-        if not is_floating:
-            if max_charge is None:
-                # All possible charges for each dot within bounds are allowed.
-                return np.prod([max(bound) - min(bound) + 1
-                                for bound in charge_bounds])
-        return 0
-    pass
+                return np.prod(max_charge)
+            if floating_charge is None:
+                raise Exception(("Total charge must be provided if a floating"
+                                 " system with charge bounds is specified!"))
+            if floating_charge > sum(max_charge):
+                raise Exception(("Total floating charge cannot exceed sum of"
+                                 " maximum charges for each dot!"))
+            sorted_max_charges = np.sort(max_charge)
+            return 0 # TODO: Finish this
+        elif numdots is None:
+            raise Exception(("If total charge is specified as integer, numdots"
+                            " must also be specified!"))
+        if is_floating:
+            return binom(max_charge - 1, numdots - 1)
+        return np.sum([binom(total_charge - 1, numdots - 1)
+                       for total_charge in range(max_charge)])
 
 
 def main():
