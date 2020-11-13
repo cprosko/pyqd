@@ -1,4 +1,5 @@
 """
+TODO: Deprecate this
 quasifermionsystem:
 Package for simulating quantum dot systems with or without leads,
 reproducing some properties of true fermionic states.
@@ -520,11 +521,11 @@ class QuasiFermionicDotSystem:
         # Compute total charging energy and mutual capacitance energy
         gs = np.array(list(gates))
         ns = np.array([np.sum(states[:,sys['name']==n,0],axis=1) - gates[n] for n in gs]).T
-        EcTot = np.sum([sys['Ec'][sys['name']==n][0]*ns[:,i]**2 for i,n in enumerate(gs)],axis=0)
+        EcTot = np.sum([sys['Ec'][sys['name']==n][0]*ns[:,i]**2 for i,n in enumerate(gs)],axis=0) # pylint: disable=E1136  # pylint/issues/3139
         EmTot = np.zeros(nStates)
         for i,n1 in enumerate(gs):
             Em = sys['Em'][n1]
-            EmTot += np.sum([Em[n2]*ns[:,i]*ns[:,j] for j,n2 in enumerate(gs)],axis=0)/2
+            EmTot += np.sum([Em[n2]*ns[:,i]*ns[:,j] for j,n2 in enumerate(gs)],axis=0)/2 # pylint: disable=E1136  # pylint/issues/3139
         #EmTot = np.einsum('ji,ij->j',ns, sys['Em'][sys['name'][gs],sys['name'][gs]] @ ns.T)/2
         # Orbital matrix element terms only need to be calculated once.
         if N == None or N not in self.__orbElements:

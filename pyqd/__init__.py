@@ -1,2 +1,2 @@
 # __init__.py
-from .quasifermionsystem import *
+from .dotsystem import *
