@@ -1,9 +1,10 @@
 """
-qdsystem:
-Package for simulating quantum dot systems with or without leads.
+quasifermionsystem:
+Package for simulating quantum dot systems with or without leads,
+reproducing some properties of true fermionic states.
 
 Work flow of a qdsystem calculation:
-    1. Initialize an instance of the DotSystem class.
+    1. Initialize an instance of the QuasiFermionicDotSystem class.
     2. Add quantum dots with their corresponding charging energies
        and other properties with self.add_dot()
     3. Add tunnel couplings between dots with self.add_coupling().
@@ -31,7 +32,7 @@ from scipy.sparse.linalg import eigsh
 from itertools import product, combinations, permutations
 from sympy.utilities.iterables import multiset_permutations
 
-class DotSystem:
+class QuasiFermionicDotSystem:
     """
     Class for simulating systems of multiple quantum dots.
 
@@ -47,7 +48,7 @@ class DotSystem:
     """
     def __init__(self, verbose=True):
         """
-        Constructor for DotSystem class.
+        Constructor for QuasiFermionicQuasiFermionicDotSystem class.
 
         Keyword Arguments:
         verbose (bool): whether or not to print results of calling methods
@@ -913,7 +914,7 @@ def isDiagonal(mat):
 
 def main():
     N = 4
-    system = DotSystem(verbose=True)
+    system = QuasiFermionicDotSystem(verbose=True)
     system.add_dot(350,name='dot0',degeneracy=1,orbitals=0,spin=True,isSC=False)
     system.add_dot(100,name='dot1',degeneracy=1,orbitals=70,spin=True,isSC=True,u=np.sqrt(0.7))
     system.add_lead(['dot0'],[10],name='lead0',level=0)
