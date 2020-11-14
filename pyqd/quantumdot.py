@@ -14,8 +14,8 @@ class QuantumDot:
 
 class SuperconductingIsland(QuantumDot):
     """Class containing properties of a superconducting charge island."""
-    def __init__(self, chargingEnergy, gapSize):
-        super().__init__(chargingEnergy, gapSize,
+    def __init__(self, name, chargingEnergy, gapSize):
+        super().__init__(name, chargingEnergy, gapSize,
                          spinDegenerate=True, __dotType="superconducting")
     pass
 
@@ -23,5 +23,5 @@ class SuperconductingIsland(QuantumDot):
 class QuasiLead(QuantumDot):
     """Class for naively modeling leads as 0-charging-energy dots."""
     def __init__(self):
-        super().__init__(0, 0, spinDegenerate=False, __dotType="lead")
+        super().__init__("lead", 0, 0, spinDegenerate=False, __dotType="lead")
     pass

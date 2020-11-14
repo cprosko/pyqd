@@ -49,6 +49,7 @@ class QuasiFermionicDotSystem:
     nleads: number of leads in system
     ndotssc: number of superconducting type dots
     """
+
     def __init__(self, verbose=True):
         """
         Constructor for QuasiFermionicQuasiFermionicDotSystem class.
@@ -78,21 +79,22 @@ class QuasiFermionicDotSystem:
     def __str__(self):
         """Print information when qdsystem is called with print()."""
         output = (
-            'qdsystem class object with: \n'
-            + str(self.ndots)+' total dot{plr}, '.format(plr='s'
-                                                         if self.ndots > 1
-                                                         else '')
-            + str(self.ndotssc)+' of which are superconducting and '
-            + str(self.ndots-self.ndotssc)+' of which are normal, as well as '
-            + str(self.nleads)+' lead{plr}.'.format(plr='s'
-                                                    if self.nleads > 1 else '')
+            "qdsystem class object with: \n"
+            + str(self.ndots)
+            + " total dot{plr}, ".format(plr="s" if self.ndots > 1 else "")
+            + str(self.ndotssc)
+            + " of which are superconducting and "
+            + str(self.ndots - self.ndotssc)
+            + " of which are normal, as well as "
+            + str(self.nleads)
+            + " lead{plr}.".format(plr="s" if self.nleads > 1 else "")
         )
         return output
 
     @property
     def ndots(self):
         """Number of dots in system."""
-        return sum([not v['isLead'] for v in self.objects.values()])
+        return sum([not v["isLead"] for v in self.objects.values()])
 
     @property
     def __ndotseff(self):
@@ -116,16 +118,11 @@ class QuasiFermionicDotSystem:
         elif len(n) == 1:
             return n[0]
         else:
-            raise Exception("Input must be an array-like of length 1 or a"
-                            + " scalar!")
+            raise Exception("Input must be an array-like of length 1 or a" + " scalar!")
 
-    def add_dot(self, Ec,
-                name=None,
-                degeneracy=1,
-                orbitals=0,
-                u=0,
-                isSC=False,
-                spin=False):
+    def add_dot(
+        self, Ec, name=None, degeneracy=1, orbitals=0, u=0, isSC=False, spin=False
+    ):
         """Add a quantum dot to the system.
 
         Parameters:
@@ -153,52 +150,55 @@ class QuasiFermionicDotSystem:
         """
         if isSC and not np.isscalar(orbitals):
             raise Exception(
-                'orbEnergies must be a scalar for superconducting islands,'
-                + ' as it corresponds to odd parity lowest energy level.')
+                "orbEnergies must be a scalar for superconducting islands,"
+                + " as it corresponds to odd parity lowest energy level."
+            )
         if name is None:
-            name = 'dot' + str(self.ndots)
+            name = "dot" + str(self.ndots)
         if any([name == n for n in self.objects]):
-            raise Exception("Dot or lead with name '" + name
-                            + "' is already defined.")
+            raise Exception("Dot or lead with name '" + name + "' is already defined.")
         if spin:
-            deg = 2*degeneracy
-            degType = 'spin'
+            deg = 2 * degeneracy
+            degType = "spin"
         else:
             deg = degeneracy
-            degType = 'none'
+            degType = "none"
         self.objects[name] = {
-            'Ec': Ec,
-            'degeneracy': deg,
-            'orbitals': orbitals,
-            'numCouplings': 0,
-            'couplings': {},
-            'twoeCouplings': {},
-            'u': u,
-            'isSC': isSC,
-            'isLead': False,
-            'spin': degType,
-            'name': name,  # For reverse searching in internal algorithms
-            }
+            "Ec": Ec,
+            "degeneracy": deg,
+            "orbitals": orbitals,
+            "numCouplings": 0,
+            "couplings": {},
+            "twoeCouplings": {},
+            "u": u,
+            "isSC": isSC,
+            "isLead": False,
+            "spin": degType,
+            "name": name,  # For reverse searching in internal algorithms
+        }
         # Add dot to collection of system objects, accounting for degeneracy
-        numEffDots = isSC + (1-isSC)*deg
+        numEffDots = isSC + (1 - isSC) * deg
         # Account for the fact that 0 electrons costs 0 orbital energy
         if not isSC:
-            orbitals = ([0, orbitals]
-                        if np.isscalar(orbitals)
-                        else [0] + orbitals)
-        self.__sysTemp.extend([[
-            name,
-            Ec,
-            isSC,
-            False,  # Dots are not leads
-            orbitals,  # Odd parity energy if isSC, else is orbital energy list
-            degType,  # Degree of freedom corresponding to degeneracy or 'none'
-            deg,  # Degeneracy of orbitals (QP states) for dots (SC islands).
-            {},  # Dictionary of all dots with tunnel couplings
-            {},  # Dictionary of all dots with mutual capacitances
-            {},  # Dictionary of all dots with 2e- tunneling
-            u,  # e-like coherence factor or no coherence factors (u == 0)
-            ]]*numEffDots)
+            orbitals = [0, orbitals] if np.isscalar(orbitals) else [0] + orbitals
+        self.__sysTemp.extend(
+            [
+                [
+                    name,
+                    Ec,
+                    isSC,
+                    False,  # Dots are not leads
+                    orbitals,  # Odd parity energy if isSC, else is orbital energy list
+                    degType,  # Degree of freedom corresponding to degeneracy or 'none'
+                    deg,  # Degeneracy of orbitals (QP states) for dots (SC islands).
+                    {},  # Dictionary of all dots with tunnel couplings
+                    {},  # Dictionary of all dots with mutual capacitances
+                    {},  # Dictionary of all dots with 2e- tunneling
+                    u,  # e-like coherence factor or no coherence factors (u == 0)
+                ]
+            ]
+            * numEffDots
+        )
         if self.verbose:
             print("Dot added with name: " + str(name) + ".")
 
@@ -222,29 +222,33 @@ class QuasiFermionicDotSystem:
         """
         dns = list(dotnames)
         if any([obj not in self.objects for obj in dns]):
-            raise Exception(dns + ' contains undefined dots or leads!')
+            raise Exception(dns + " contains undefined dots or leads!")
         for d1, d2 in combinations(dns, 2):
             if (
-                d2 in self.objects[d1]['couplings'] and not twoe
-                or d2 in self.objects[d1]['twoeCouplings'] and twoe
+                d2 in self.objects[d1]["couplings"]
+                and not twoe
+                or d2 in self.objects[d1]["twoeCouplings"]
+                and twoe
             ):
                 warnings.warn(
-                    'Coupling already exists between objects '
-                    + d1 + ' and ' + d2
+                    "Coupling already exists between objects "
+                    + d1
+                    + " and "
+                    + d2
                     + "! Overwriting with new coupling parameters."
-                    )
+                )
             else:
-                self.objects[d1]['numCouplings'] += 1
-                self.objects[d2]['numCouplings'] += 1
+                self.objects[d1]["numCouplings"] += 1
+                self.objects[d2]["numCouplings"] += 1
             # Add entry to 'couplings' with other dot's name as key
             if twoe:
-                c = {'Em': Em, 't': 0}
-                self.objects[d1]['twoeCouplings'][d2] = t
-                self.objects[d2]['twoeCouplings'][d1] = t
+                c = {"Em": Em, "t": 0}
+                self.objects[d1]["twoeCouplings"][d2] = t
+                self.objects[d2]["twoeCouplings"][d1] = t
             else:
-                c = {'Em': Em, 't': t}
-            self.objects[d1]['couplings'].update({d2: c})
-            self.objects[d2]['couplings'].update({d1: c})
+                c = {"Em": Em, "t": t}
+            self.objects[d1]["couplings"].update({d2: c})
+            self.objects[d2]["couplings"].update({d1: c})
             # Update self.__sysTemp with coupling information
             i1 = [i for i, v in enumerate(self.__sysTemp) if v[0] == d1]
             i2 = [i for i, v in enumerate(self.__sysTemp) if v[0] == d2]
@@ -261,10 +265,14 @@ class QuasiFermionicDotSystem:
 
         if self.verbose:
             print(
-                "{te}unnel coupling ".format(te='2e- t' if twoe else 'T')
-                + str(t) + " and mutual capacitance " + str(Em)
-                + " added between dots: " + str(dotnames) + '.'
-                )
+                "{te}unnel coupling ".format(te="2e- t" if twoe else "T")
+                + str(t)
+                + " and mutual capacitance "
+                + str(Em)
+                + " added between dots: "
+                + str(dotnames)
+                + "."
+            )
 
     def add_lead(self, dots, t, name=None, level=0):
         """Add a lead to the system.
@@ -281,29 +289,30 @@ class QuasiFermionicDotSystem:
         level (float): Chemical potential of electrons in this lead
         """
         if name is None:
-            name = 'lead' + str(self.nleads)
+            name = "lead" + str(self.nleads)
         if any([name == n for n in self.objects]):
-            raise Exception("Lead or dot with name '" + name
-                            + "' is already defined.")
+            raise Exception("Lead or dot with name '" + name + "' is already defined.")
         self.objects[name] = {
-            'couplings': {},
-            'twoeCouplings': {},
-            'level': level,
-            'isLead': True,
-            'numCouplings': 0,
-            'name': name,
+            "couplings": {},
+            "twoeCouplings": {},
+            "level": level,
+            "isLead": True,
+            "numCouplings": 0,
+            "name": name,
         }
         # Add lead to internal list of system objects
-        self.__sysTemp.append([name, 0, False, True, level,
-                               'none', 1, {}, {}, {}, 0])
+        self.__sysTemp.append([name, 0, False, True, level, "none", 1, {}, {}, {}, 0])
         # Create couplings dict. so 'leads' may be searched like dots
         for i, dot in enumerate(dots):
             self.add_coupling(0, t[i], (name, dot), twoe=False)
         if self.verbose:
             print(
-                "Lead with chemical potential " + str(level)
-                + " added which couples to dots: " + str(dots) + "."
-                )
+                "Lead with chemical potential "
+                + str(level)
+                + " added which couples to dots: "
+                + str(dots)
+                + "."
+            )
 
     def delete(self, *names):
         """Delete dot/lead/coupling with [name].
@@ -315,22 +324,25 @@ class QuasiFermionicDotSystem:
             dot or lead with same name, if tuple of strings, deletes
             all couplings between named objects.
         """
+
         def del_coupling(*names):
             """Deletes coupling between objects in names."""
             if np.isscalar(names) or len(names) == 1:
                 name = self.__cast_as_sclr(names)
-                for n in [n for n in self.objects
-                          if name in self.objects[n]['couplings']]:
-                    del self.objects[n]['couplings'][name]
-                    self.objects[n]['numCouplings'] -= 1
-                for n in [n for n in self.objects
-                          if name in self.objects[n]['twoeCouplings']]:
-                    del self.objects[n]['twoeCouplings'][name]
-                    self.objects[n]['numCouplings'] -= 1
+                for n in [
+                    n for n in self.objects if name in self.objects[n]["couplings"]
+                ]:
+                    del self.objects[n]["couplings"][name]
+                    self.objects[n]["numCouplings"] -= 1
+                for n in [
+                    n for n in self.objects if name in self.objects[n]["twoeCouplings"]
+                ]:
+                    del self.objects[n]["twoeCouplings"][name]
+                    self.objects[n]["numCouplings"] -= 1
             else:
                 for n1, n2 in permutations(*names, 2):
-                    del self.objects[n1]['couplings'][n2]
-                    self.objects[n1]['numCouplings'] -= 1
+                    del self.objects[n1]["couplings"][n2]
+                    self.objects[n1]["numCouplings"] -= 1
             self.__tunnelingHam = {}
             self.__orbElements = {}
 
@@ -358,42 +370,44 @@ class QuasiFermionicDotSystem:
         # Convert .__sysTemp to numpy array of all objects
         sys = np.array(self.__sysTemp, dtype=object)
         # First translate each object's properties into numpy array
-        self.__sys.update({
-            'name': np.array(sys[:, 0], dtype=str),
-            'Ec': np.array(sys[:, 1], dtype=float),
-            'isSC': np.array(sys[:, 2], dtype=bool),
-            'isLead': np.array(sys[:, 3], dtype=bool),
-            'orb': np.array(sys[:, 4], dtype=list),
-            'spin': np.array(sys[:, 5], dtype=str),
-            'deg': np.array(sys[:, 6], dtype=int),
-            'Em': {},
-            't': np.zeros((nDots, nDots)),
-            'twoet': np.zeros((nDots, nDots)),
-            'u': np.full((nDots, 2), 1, dtype=float)
-        })
+        self.__sys.update(
+            {
+                "name": np.array(sys[:, 0], dtype=str),
+                "Ec": np.array(sys[:, 1], dtype=float),
+                "isSC": np.array(sys[:, 2], dtype=bool),
+                "isLead": np.array(sys[:, 3], dtype=bool),
+                "orb": np.array(sys[:, 4], dtype=list),
+                "spin": np.array(sys[:, 5], dtype=str),
+                "deg": np.array(sys[:, 6], dtype=int),
+                "Em": {},
+                "t": np.zeros((nDots, nDots)),
+                "twoet": np.zeros((nDots, nDots)),
+                "u": np.full((nDots, 2), 1, dtype=float),
+            }
+        )
         # Appoint spin up/down to each quasi-dot, excluding SC islands
         for i, dt in enumerate(sys[:, 5]):
-            if dt == 'spin' and not sys[i, 2]:
+            if dt == "spin" and not sys[i, 2]:
                 if i % 2 == 0:
-                    self.__sys['spin'][i] = 'down'
+                    self.__sys["spin"][i] = "down"
                 else:
-                    self.__sys['spin'][i] = 'up'
+                    self.__sys["spin"][i] = "up"
         # Calculate coherence factors for dots where they are
         for i, u in [(i, u) for i, u in enumerate(sys[:, 10]) if u != 0]:
-            self.__sys['u'][i] = [u, np.sqrt(1-u**2)]
+            self.__sys["u"][i] = [u, np.sqrt(1 - u ** 2)]
         # Next, translate couplings into numpy array in .__sys as well
-        for n in self.__sys['name']:
-            self.__sys['Em'][n] = {}
-        for i, n1 in enumerate(self.__sys['name']):
+        for n in self.__sys["name"]:
+            self.__sys["Em"][n] = {}
+        for i, n1 in enumerate(self.__sys["name"]):
             t = sys[i][7]
             Em = sys[i][8]
-            for j, n2 in enumerate(self.__sys['name']):
-                self.__sys['Em']
-                self.__sys['Em'][n1][n2] = Em[j] if j in Em else 0
-                self.__sys['Em'][n2][n1] = Em[j] if j in Em else 0
-                self.__sys['t'][i, j] = t[j] if j in t else 0
+            for j, n2 in enumerate(self.__sys["name"]):
+                self.__sys["Em"]
+                self.__sys["Em"][n1][n2] = Em[j] if j in Em else 0
+                self.__sys["Em"][n2][n1] = Em[j] if j in Em else 0
+                self.__sys["t"][i, j] = t[j] if j in t else 0
         # Finally, symmetrize the 't' array:
-        self.__sys['t'] = symmetrize(self.__sys['t'])
+        self.__sys["t"] = symmetrize(self.__sys["t"])
         self.__isFinalized = True
 
     def get_states(self, N):
@@ -416,25 +430,31 @@ class QuasiFermionicDotSystem:
         nObjs = self.__ndotseff
         areLeads = self.nleads > 0
         areDegenerateDots = self.__ndotseff != self.ndots
-        nMax = N*self.ndots*self.nleads if self.nleads > 0 else N
+        nMax = N * self.ndots * self.nleads if self.nleads > 0 else N
         # List of all indices of 'quasi'-dots comprising degenerate dots
-        degIndices = np.array([
-            [i for i, v in enumerate(sys['name']) if sys['name'][i] == n]
-            for n in set(sys['name']) if (sys['name'] == n).sum() > 1
-        ])
+        degIndices = np.array(
+            [
+                [i for i, v in enumerate(sys["name"]) if sys["name"][i] == n]
+                for n in set(sys["name"])
+                if (sys["name"] == n).sum() > 1
+            ]
+        )
 
         def EcNotEnforced(chgs, degIndices=degIndices):
             """Ensures degenerate dots have no extra charge in deg. orbital."""
-            return any([any([abs(d[0]-d[1]) > 1
-                             for d in combinations(chgs[inds], 2)])
-                        for inds in degIndices])
+            return any(
+                [
+                    any([abs(d[0] - d[1]) > 1 for d in combinations(chgs[inds], 2)])
+                    for inds in degIndices
+                ]
+            )
 
         # Assign positive numbers to spin up and negative to spin down.
         spin = []
-        for i, s in enumerate(sys['spin']):
-            if s == 'down':
+        for i, s in enumerate(sys["spin"]):
+            if s == "down":
                 spin.append(-1)
-            elif s == 'up':
+            elif s == "up":
                 spin.append(1)
             else:
                 spin.append(0)
@@ -444,22 +464,20 @@ class QuasiFermionicDotSystem:
             # First index corresponds to charge, second to quantum number of
             # quasi-dot and third to whether or not dot is spinful.
             return [
-                [[c, j+1, 1] for j in range(sys['deg'][i]//2)]
-                + [[c, -j-1, 1] for j in range(sys['deg'][i]//2)]
-                if sys['isSC'][i]
-                and charges[i] % 2
-                and sys['spin'][i] == 'spin'
-                else [[c, j, 0] for j in range(sys['deg'][i])]
-                if sys['isSC'][i] and charges[i] % 2
+                [[c, j + 1, 1] for j in range(sys["deg"][i] // 2)]
+                + [[c, -j - 1, 1] for j in range(sys["deg"][i] // 2)]
+                if sys["isSC"][i] and charges[i] % 2 and sys["spin"][i] == "spin"
+                else [[c, j, 0] for j in range(sys["deg"][i])]
+                if sys["isSC"][i] and charges[i] % 2
                 else [[c, 0, 1]]
-                if sys['isSC'][i] and sys['spin'][i] == 'spin'
+                if sys["isSC"][i] and sys["spin"][i] == "spin"
                 else [[c, spin[i], abs(spin[i])]]
                 for i, c in enumerate(charges)
-                ]
+            ]
 
         def dotChargeIsNotN(charges, N):
             """Returns True if dot charges are above N, ignoring leads."""
-            return np.any(charges[sys['isLead'] is False] > N)
+            return np.any(charges[sys["isLead"] is False] > N)
 
         def partitions(n, k, NInput, minPartSize=0, kc=None):
             """Yields possible charge/orbital states.
@@ -481,16 +499,15 @@ class QuasiFermionicDotSystem:
                 # If only one integer is left, and the remainder is larger than
                 # the minimum size l, we are done.
                 return
-            for i in range(minPartSize, n+1):
+            for i in range(minPartSize, n + 1):
                 # Call partitions with l=i to ensure that no tuple is yielded
                 # twice, as this enforces i being the largest integer
-                for r in partitions(n-i, k, NInput, minPartSize=i, kc=kc-1):
+                for r in partitions(n - i, k, NInput, minPartSize=i, kc=kc - 1):
                     s = tuple(r) + (i,)
                     # If len(s) == n, we have an (undordered) charge state
                     if len(s) == k:
                         # Find all ordered charge states from unordered states
-                        for p in [np.array(p)
-                                  for p in multiset_permutations(s)]:
+                        for p in [np.array(p) for p in multiset_permutations(s)]:
                             # Enforce charging energy if degenerate dots exist.
                             if areDegenerateDots and EcNotEnforced(p):
                                 continue
@@ -504,12 +521,15 @@ class QuasiFermionicDotSystem:
                     yield s
 
         ti = time.perf_counter()
-        self.states[N] = np.array([chgs
-                                   for chgs in partitions(nMax, nObjs, N)])
+        self.states[N] = np.array([chgs for chgs in partitions(nMax, nObjs, N)])
         if self.verbose:
-            print("Time to generate " + str(len(self.states[N][:, 0, 0]))
-                  + " system states was " + str(time.perf_counter() - ti)
-                  + 's')
+            print(
+                "Time to generate "
+                + str(len(self.states[N][:, 0, 0]))
+                + " system states was "
+                + str(time.perf_counter() - ti)
+                + "s"
+            )
         return self.states[N]
 
     def dimension(self, N):
@@ -545,33 +565,49 @@ class QuasiFermionicDotSystem:
         nStates = len(states[:, 0, 0])
         # Compute total charging energy and mutual capacitance energy
         gs = np.array(list(gates))
-        ns = np.array([np.sum(states[:, sys['name'] == n, 0], axis=1)
-                       - gates[n]
-                       for n in gs]).T
-        EcTot = np.sum([sys['Ec'][sys['name'] == n][0]*ns[:, i]**2  # pylint: disable=E1136  # pylint/issues/3139
-                        for i, n in enumerate(gs)], axis=0)
+        ns = np.array(
+            [np.sum(states[:, sys["name"] == n, 0], axis=1) - gates[n] for n in gs]
+        ).T
+        EcTot = np.sum(
+            [
+                sys["Ec"][sys["name"] == n][0]
+                * ns[:, i] ** 2  # pylint: disable=E1136  # pylint/issues/3139
+                for i, n in enumerate(gs)
+            ],
+            axis=0,
+        )
         EmTot = np.zeros(nStates)
-        for i,n1 in enumerate(gs):
-            Em = sys['Em'][n1]
-            EmTot += np.sum([Em[n2]*ns[:, i]*ns[:, j]  # pylint: disable=E1136  # pylint/issues/3139
-                             for j, n2 in enumerate(gs)], axis=0)/2
+        for i, n1 in enumerate(gs):
+            Em = sys["Em"][n1]
+            EmTot += (
+                np.sum(
+                    [
+                        Em[n2]
+                        * ns[:, i]
+                        * ns[:, j]  # pylint: disable=E1136  # pylint/issues/3139
+                        for j, n2 in enumerate(gs)
+                    ],
+                    axis=0,
+                )
+                / 2
+            )
         # Orbital matrix element terms only need to be calculated once.
         if N is None or N not in self.__orbElements:
             # Compute orbital energy of SC quasiparticles then of electrons on
             # normal dots.
             Eorb = np.einsum(
-                'i,ij',
-                np.array(np.where(sys['isSC'], sys['orb'], 0), dtype=float),
-                states[..., 0].T % 2
-                )
+                "i,ij",
+                np.array(np.where(sys["isSC"], sys["orb"], 0), dtype=float),
+                states[..., 0].T % 2,
+            )
             # Add orbital energies of normal dots:
             Eorb += np.sum(
                 [
-                    np.take(o, states[:, i, 0], mode='clip')
-                    for i, o in enumerate(sys['orb'][sys['isSC'] is False])
+                    np.take(o, states[:, i, 0], mode="clip")
+                    for i, o in enumerate(sys["orb"][sys["isSC"] is False])
                 ],
-                axis=0
-                )
+                axis=0,
+            )
             self.__orbElements[N] = Eorb
         else:
             Eorb = self.__orbElements[N]
@@ -618,13 +654,12 @@ class QuasiFermionicDotSystem:
         # conserved total charge:
         nbrs = np.sum(np.abs(diffs), axis=2)[..., 0] == 2
         # Ensure no quasiparticle hopping has occurred as well:
-        nbrs *= (np.any((diffs[..., 0] == 0)*(diffs[..., 1] != 0), axis=2)
-                 is False)
+        nbrs *= np.any((diffs[..., 0] == 0) * (diffs[..., 1] != 0), axis=2) is False
         # Calculate the total spin of each state
-        spins = states[..., 0]*states[..., 1]*states[..., 2]
+        spins = states[..., 0] * states[..., 1] * states[..., 2]
         # Account for fact that SC islands can have max |spin| = 1
-        spins[(spins > 0)*sys['isSC']] = 1
-        spins[(spins < 0)*sys['isSC']] = -1
+        spins[(spins > 0) * sys["isSC"]] = 1
+        spins[(spins < 0) * sys["isSC"]] = -1
         totSpin = np.sum(spins, axis=1)
         # Calculate spin differences between each state combo
         spinDiffs = np.abs([totSpin[i] - totSpin for i in range(nStates)])
@@ -636,37 +671,34 @@ class QuasiFermionicDotSystem:
         # Calculate array of obj. indices where charge was transferred
         objInds = np.nonzero(nbrDiffs)[1].reshape((len(nbrDiffs[:, 0]), 2)).T
         # Flatten indices to match size of .__sys['t'] (tunnel coupling matrix)
-        objInds = np.ravel_multi_index(objInds, sys['t'].shape)
+        objInds = np.ravel_multi_index(objInds, sys["t"].shape)
         # Find tunnel coupling magnitude for each nearest neighbour
-        ts = np.take(sys['t'], objInds)
+        ts = np.take(sys["t"], objInds)
         ham = np.zeros((nStates, nStates))
         ham[nbrs] = ts
         # Find whether each dot in each state pair gained or lost an electron
         gainOrLose = np.where(diffs[..., 0] > 0, 1, 0)
         gainOrLose[diffs[..., 0] < 0] = -1
         # Find whether (quasi-)dots went from odd->even (1) or even->odd (0)
-        parityChange = np.array([
-            states[i, :, 0] % 2 - states[..., 0] % 2
-            for i in range(nStates)
-            ])
+        parityChange = np.array(
+            [states[i, :, 0] % 2 - states[..., 0] % 2 for i in range(nStates)]
+        )
         # Index of whether tunneling for dots involved u or v coherence factor
-        uvIndices = (gainOrLose*parityChange + 2)//2
+        uvIndices = (gainOrLose * parityChange + 2) // 2
         # Coherence factor products for each state pair
         coherenceFactors = np.prod(
             np.where(
-                diffs[..., 0] != 0,
-                sys['u'][range(self.__ndotseff), uvIndices],
-                1
+                diffs[..., 0] != 0, sys["u"][range(self.__ndotseff), uvIndices], 1
             ),
-            axis=2
+            axis=2,
         )
         # Multiply off-diagonal elements with coherence factors:
         ham *= coherenceFactors
         if self.verbose:
             print(
                 "Time to generate tunneling Hamiltonian "
-                + "was {t}s.".format(t=time.perf_counter()-ti)
-                )
+                + "was {t}s.".format(t=time.perf_counter() - ti)
+            )
         if not hamiltonian:
             nbrs[ham == 0] = False
             return nbrs
@@ -692,8 +724,9 @@ class QuasiFermionicDotSystem:
             else:
                 raise Exception(
                     "System states must be already generated or total "
-                    + "charge must be specified to get number operator."""
-                    )
+                    + "charge must be specified to get number operator."
+                    ""
+                )
         else:
             if N in self.states:
                 return self.states[N]
@@ -710,13 +743,23 @@ class QuasiFermionicDotSystem:
         if not self.__isFinalized:
             self.finalize()
         states = self.__choose_states(N)
-        return np.diag(np.sum(states[:, self.__sys['name'] == name, 0],
-                              axis=1))
+        return np.diag(np.sum(states[:, self.__sys["name"] == name, 0], axis=1))
 
-    def cp_stability_diagram(self, probeName, leverArms, gates,
-                             N=None, T=0, nLevels=None, tempTol=0.1,
-                             sparse=False, removeJumps=False, flipAxes=False,
-                             contoured=False, **plotparams):
+    def cp_stability_diagram(
+        self,
+        probeName,
+        leverArms,
+        gates,
+        N=None,
+        T=0,
+        nLevels=None,
+        tempTol=0.1,
+        sparse=False,
+        removeJumps=False,
+        flipAxes=False,
+        contoured=False,
+        **plotparams
+    ):
         """Generate and plot parametric capacitance stability diagram.
 
         Given the defined qdsystem and total charge N (per dot if leads exist),
@@ -765,18 +808,20 @@ class QuasiFermionicDotSystem:
         dim = self.dimension(N)
         sys = self.__sys
         # Pick out the 'dot' names for the two voltages that are varying:
-        gvar = np.array([n for n, g in gates.items()
-                         if not np.isscalar(g) and len(g) > 1])
+        gvar = np.array(
+            [n for n, g in gates.items() if not np.isscalar(g) and len(g) > 1]
+        )
         if len(gvar) != 2:
-            raise Exception('Two gates must be swept over at a time!')
+            raise Exception("Two gates must be swept over at a time!")
         if probeName not in gvar:
             raise Exception(
                 "Parametric capacitance can only be probed from a "
                 + "gate which varies!"
-                )
-        if any([n not in gates for n in sys['name'][sys['isLead'] is False]]):
-            raise Exception("Gate voltages must be supplied for all dots in "
-                            + "the system!")
+            )
+        if any([n not in gates for n in sys["name"][sys["isLead"] is False]]):
+            raise Exception(
+                "Gate voltages must be supplied for all dots in " + "the system!"
+            )
         coupledDot = gvar[gvar != probeName][0]
         # Generate number operator diagonals for two gates with lever arms
         numOp1 = np.diag(self.get_num_op(probeName, N))
@@ -784,7 +829,7 @@ class QuasiFermionicDotSystem:
         # If temperature != 0, make sure more than one eigenvalue of
         # hamiltonian is obtained.
         if T != 0 and nLevels is None:
-            nLevels = int(self.dimension(N)/10)
+            nLevels = int(self.dimension(N) / 10)
         elif T == 0:
             nLevels = 1
         # Initialize matrix of number&energy expectation values.
@@ -803,8 +848,12 @@ class QuasiFermionicDotSystem:
             for j, g1 in enumerate(gates[coupledDot]):
                 # Calculate and generate Hamiltonian for each voltage combo
                 gs = dict(gates)
-                gs.update({probeName: g0+leverArms[0]*g1,
-                           coupledDot: g1+leverArms[1]*g0})
+                gs.update(
+                    {
+                        probeName: g0 + leverArms[0] * g1,
+                        coupledDot: g1 + leverArms[1] * g0,
+                    }
+                )
                 ti2 = time.perf_counter()
                 h = self.get_hamiltonian(N, gs)
                 t2 += time.perf_counter() - ti2
@@ -816,7 +865,7 @@ class QuasiFermionicDotSystem:
                     v0 = np.zeros((dim, nLevels))
                     v0[np.array([range(nLevels), inds]).T] = 1
                 elif sparse:
-                    e, v = eigsh(h, k=nLevels, which='SM')
+                    e, v = eigsh(h, k=nLevels, which="SM")
                     v0 = v
                     e0 = e
                 else:
@@ -826,39 +875,48 @@ class QuasiFermionicDotSystem:
                 t3 += time.perf_counter() - ti3
                 if T != 0:
                     # Calculate partition function:
-                    Z = np.sum(np.exp(-e0/T))
+                    Z = np.sum(np.exp(-e0 / T))
                     if Z == 0:
                         raise Exception(
                             "Partition function is 0. Use higher kT or "
-                            + "approximate system as 0 temperature.")
-                    if np.exp(-e0[-1]/T)/Z > tempTol:
+                            + "approximate system as 0 temperature."
+                        )
+                    if np.exp(-e0[-1] / T) / Z > tempTol:
                         raise Exception(
                             "At temperature kT = {T}, more states ".format(T=T)
                             + "than nLevels = "
                             + "{n} should be included.".format(n=nLevels)
-                            )
+                        )
                     # Calculate energy expectation value:
-                    energies[i, j] = np.sum(e0*np.exp(-e0/T))/Z
+                    energies[i, j] = np.sum(e0 * np.exp(-e0 / T)) / Z
                     # Calculate number expectation values:
-                    ns[i, j, 0] = np.sum([
-                        (v0[:, i] @ numOp1 @ v0[:, i])*np.exp(-e0[i]/T)/Z
-                        for i in range(nLevels)
-                        ])
-                    ns[i, j, 1] = np.sum([
-                        (v0[:, i] @ numOp2 @ v0[:, i])*np.exp(-e0[i]/T)/Z
-                        for i in range(nLevels)
-                        ])
+                    ns[i, j, 0] = np.sum(
+                        [
+                            (v0[:, i] @ numOp1 @ v0[:, i]) * np.exp(-e0[i] / T) / Z
+                            for i in range(nLevels)
+                        ]
+                    )
+                    ns[i, j, 1] = np.sum(
+                        [
+                            (v0[:, i] @ numOp2 @ v0[:, i]) * np.exp(-e0[i] / T) / Z
+                            for i in range(nLevels)
+                        ]
+                    )
                 else:
                     ti4 = time.perf_counter()
                     energies[i, j] = e0
                     ns[i, j, 0] = v0.T @ (v0.T * numOp1).T
                     ns[i, j, 1] = v0.T @ (v0.T * numOp2).T
-                    t4 += time.perf_counter()-ti4
+                    t4 += time.perf_counter() - ti4
 
             if self.verbose:
-                print("Finished row {row}/{totRows} in: {t}s."
-                      .format(row=i+1, totRows=len(gates[probeName]),
-                              t=time.perf_counter()-ti1))
+                print(
+                    "Finished row {row}/{totRows} in: {t}s.".format(
+                        row=i + 1,
+                        totRows=len(gates[probeName]),
+                        t=time.perf_counter() - ti1,
+                    )
+                )
                 print("Calculating Hamiltonians: {t}s".format(t=t2))
                 print("Diagonalizing Hamiltonians: {t}s\r".format(t=t3))
                 print("Calculating matrix products: {t}s.".format(t=t4))
@@ -875,36 +933,51 @@ class QuasiFermionicDotSystem:
             ns1 = ns[..., 1].T
         if contoured:
             contours = (
-                np.diff(ns0+ns1, axis=0)[:, 0:-1]
-                + np.diff(ns0+ns1, axis=1)[0:-1, :]
-                - np.abs(np.diff(ns0-ns1, axis=0)[:, 0:-1])/2
-                - np.abs(np.diff(ns0-ns1, axis=1)[0:-1, :])/2
+                np.diff(ns0 + ns1, axis=0)[:, 0:-1]
+                + np.diff(ns0 + ns1, axis=1)[0:-1, :]
+                - np.abs(np.diff(ns0 - ns1, axis=0)[:, 0:-1]) / 2
+                - np.abs(np.diff(ns0 - ns1, axis=1)[0:-1, :]) / 2
             )
             cpos = np.where(contours > 0, 1, 0)
             cneg = np.where(contours < 0, 1, 0)
             thickness = 4
-            plt.contour(xAxis[0:-1], yAxis[0:-1], cpos, 1, colors=['black'],
-                        antialiased=True, linewidths=thickness)
-            plt.contour(xAxis[0:-1], yAxis[0:-1], cneg, 1, colors=['red'],
-                        antialiased=True, linewidths=thickness)
-            plt.xlabel('{g} reduced voltage'.format(g=probeName))
-            plt.ylabel('{g} reduced voltage'.format(g=coupledDot))
+            plt.contour(
+                xAxis[0:-1],
+                yAxis[0:-1],
+                cpos,
+                1,
+                colors=["black"],
+                antialiased=True,
+                linewidths=thickness,
+            )
+            plt.contour(
+                xAxis[0:-1],
+                yAxis[0:-1],
+                cneg,
+                1,
+                colors=["red"],
+                antialiased=True,
+                linewidths=thickness,
+            )
+            plt.xlabel("{g} reduced voltage".format(g=probeName))
+            plt.ylabel("{g} reduced voltage".format(g=coupledDot))
         else:
             # Calculate vectors to be used for directional derivative
             # Calculate spacings
             dx = abs(gates[probeName][1] - gates[probeName][0])
             # For small C_m, we have C_m = e^2Em/Ec1Ec2
             # So C_{ij}/C_{j} = E_m^{ij}/E_{ci} in general
-            EcProbed = self.objects[probeName]['Ec']
-            EcCoupled = self.objects[probeName]['Ec']
-            EmProbed = list((self.__sys['Em'][probeName].values()))
-            EmCoupled = list((self.__sys['Em'][coupledDot].values()))
-            effLever1 = 1 - sum(EmProbed)/EcProbed
-            effLever2 = leverArms[0]*(1 - sum(EmCoupled)/EcCoupled)
+            EcProbed = self.objects[probeName]["Ec"]
+            EcCoupled = self.objects[probeName]["Ec"]
+            EmProbed = list((self.__sys["Em"][probeName].values()))
+            EmCoupled = list((self.__sys["Em"][coupledDot].values()))
+            effLever1 = 1 - sum(EmProbed) / EcProbed
+            effLever2 = leverArms[0] * (1 - sum(EmCoupled) / EcCoupled)
             # C_p is given by \sum_i alpha_i(1-\sum_j(C_ij/C_j))*dn_i/dV_g
             # Where V_g is voltage of probed gate
-            cp = effLever1*(np.diff(ns0, axis=0)/dx
-                            + effLever2*np.diff(ns1, axis=0)/dx)
+            cp = effLever1 * (
+                np.diff(ns0, axis=0) / dx + effLever2 * np.diff(ns1, axis=0) / dx
+            )
             # cp = (
             #     gradProbed @ detProbed
             #     + leverArms[0]**2*gradCoupled @ detCoupled
@@ -915,34 +988,34 @@ class QuasiFermionicDotSystem:
                 cp = cp.T
             if removeJumps:
                 print(np.std(cp))
-                cp[cp - np.mean(cp) > 2*np.std(cp)] = 0
+                cp[cp - np.mean(cp) > 2 * np.std(cp)] = 0
             fig, axs = plt.subplots(2, 2, sharex=True, sharey=True)
             ax = axs[0, 0]
             im = ax.pcolormesh(xAxis, yAxis, cp, **plotparams)
-            fig.colorbar(im, ax=ax, label='C_p')
-            ax.set_xlabel(gvar[0] + ' reduced voltage')
-            ax.set_ylabel(gvar[1] + ' reduced voltage')
+            fig.colorbar(im, ax=ax, label="C_p")
+            ax.set_xlabel(gvar[0] + " reduced voltage")
+            ax.set_ylabel(gvar[1] + " reduced voltage")
             ax = axs[0, 1]
             im = ax.pcolormesh(xAxis, yAxis, energies, **plotparams)
-            fig.colorbar(im, ax=ax, label='GS Energy (rel. units)')
-            ax.set_xlabel(gvar[0] + ' reduced voltage')
-            ax.set_ylabel(gvar[1] + ' reduced voltage')
+            fig.colorbar(im, ax=ax, label="GS Energy (rel. units)")
+            ax.set_xlabel(gvar[0] + " reduced voltage")
+            ax.set_ylabel(gvar[1] + " reduced voltage")
             ax = axs[1, 0]
             im = ax.pcolormesh(xAxis, yAxis, ns0, **plotparams)
-            fig.colorbar(im, ax=ax, label='<n> (probed dot)')
-            ax.set_xlabel(gvar[0] + ' reduced voltage')
-            ax.set_ylabel(gvar[1] + ' reduced voltage')
+            fig.colorbar(im, ax=ax, label="<n> (probed dot)")
+            ax.set_xlabel(gvar[0] + " reduced voltage")
+            ax.set_ylabel(gvar[1] + " reduced voltage")
             ax = axs[1, 1]
             im = ax.pcolormesh(xAxis, yAxis, ns1, **plotparams)
-            fig.colorbar(im, ax=ax, label='<n> (other dot)')
-            ax.set_xlabel(gvar[0] + ' reduced voltage')
-            ax.set_ylabel(gvar[1] + ' reduced voltage')
+            fig.colorbar(im, ax=ax, label="<n> (other dot)")
+            ax.set_xlabel(gvar[0] + " reduced voltage")
+            ax.set_ylabel(gvar[1] + " reduced voltage")
         plt.show()
 
 
 def symmetrize(mat):
     """Symmetrizes a numpy array like object and halves its entries"""
-    return (mat + mat.T - np.diag(mat.diagonal()))/2
+    return (mat + mat.T - np.diag(mat.diagonal())) / 2
 
 
 def isDiagonal(mat):
@@ -953,24 +1026,37 @@ def isDiagonal(mat):
 def main():
     N = 4
     system = QuasiFermionicDotSystem(verbose=True)
-    system.add_dot(350, name='dot0', degeneracy=1, orbitals=0, spin=True,
-                   isSC=False)
-    system.add_dot(100, name='dot1', degeneracy=1, orbitals=70, spin=True,
-                   isSC=True, u=np.sqrt(0.7))
-    system.add_lead(['dot0'], [10], name='lead0', level=0)
-    system.add_lead(['dot1'], [10], name='lead1', level=0)
-    system.add_coupling(60, 20, ['dot0', 'dot1'], twoe=False)
+    system.add_dot(350, name="dot0", degeneracy=1, orbitals=0, spin=True, isSC=False)
+    system.add_dot(
+        100,
+        name="dot1",
+        degeneracy=1,
+        orbitals=70,
+        spin=True,
+        isSC=True,
+        u=np.sqrt(0.7),
+    )
+    system.add_lead(["dot0"], [10], name="lead0", level=0)
+    system.add_lead(["dot1"], [10], name="lead1", level=0)
+    system.add_coupling(60, 20, ["dot0", "dot1"], twoe=False)
     print(system)
     system.get_states(N)
     npoints = 200
-    gates = {'dot0': np.linspace(0, N, npoints),
-             'dot1': np.linspace(0, N, npoints)}
+    gates = {"dot0": np.linspace(0, N, npoints), "dot1": np.linspace(0, N, npoints)}
     leverArms = [0.2, 0.05]
     system.cp_stability_diagram(
-        'dot1', leverArms, gates, N=N,
-        T=0, sparse=False, removeJumps=False,
-        flipAxes=True, contoured=False, cmap='viridis')
+        "dot1",
+        leverArms,
+        gates,
+        N=N,
+        T=0,
+        sparse=False,
+        removeJumps=False,
+        flipAxes=True,
+        contoured=False,
+        cmap="viridis",
+    )
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()

@@ -8,8 +8,7 @@ statistics.
 import numpy as np
 
 from .quantumdot import QuantumDot, SuperconductingIsland, QuasiLead
-from .utilities import is_iterable
-from scipy.special import binom
+from .utilities import is_iterable, binom
 
 
 class DotSystem:
@@ -24,11 +23,6 @@ class DotSystem:
     def couplings(self):
         return self._couplings
 
-    @couplings.setter
-    def couplings(self, dot1name, dot2name, amplitude):
-        self._couplings[(dot1name, dot2name)] = amplitude
-        self._couplings[(dot2name, dot1name)] = np.conjugate(amplitude)
-
     @property
     def dots(self):
         return self._dots
@@ -37,13 +31,17 @@ class DotSystem:
     def numdots(self):
         return len(self._dots.keys())
 
+    def set_coupling(self, dot1name, dot2name, amplitude):
+        self._couplings[(dot1name, dot2name)] = amplitude
+        self._couplings[(dot2name, dot1name)] = np.conjugate(amplitude)
+
     def initialize_coupling(self, dotname, amplitude=0):
         existing_dot_names = [k for k in self._dots.keys() if k != dotname]
         for edn in existing_dot_names:
-            self.couplings(dotname, edn, amplitude)
+            self.set_coupling(dotname, edn, amplitude)
 
     def remove_coupling(self, dot1name, dot2name):
-        self.couplings(dot1name, dot2name, 0)
+        self.set_coupling(dot1name, dot2name, 0)
 
     def remove_dot(self, dotname):
         del self._dots[dotname]
@@ -59,7 +57,7 @@ class DotSystem:
         self._dots[dot.name] = dot
         existing_dot_names = [k for k in self._dots.keys() if k != dot.name]
         for edn in existing_dot_names:
-            self.couplings(dotname, edn, amplitude)
+            self.set_coupling(dot.name, edn, 0)
 
     def add_dot(self, *args, **kwargs):
         if len(args) == 1:
@@ -102,7 +100,7 @@ class DotSystem:
             raise Exception(
                 (
                     "If total charge is specified as integer, numdots"
-                    " must also be specified!"
+                    + "must also be specified!"
                 )
             )
         if is_floating:
