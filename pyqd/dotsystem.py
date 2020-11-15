@@ -82,7 +82,7 @@ class DotSystem:
         }
 
     def initialize_coupling(self, dotname):
-        existing_dot_names = [k for k in self._dots.keys() if k != dotname]
+        existing_dot_names = [d.name for d in self._dots if d.name != dotname]
         for edn in existing_dot_names:
             self.set_coupling(dotname, edn)
 
@@ -90,22 +90,22 @@ class DotSystem:
         self.set_coupling(dot1name, dot2name, 0)
 
     def remove_dot(self, dotname):
-        del self._dots[dotname]
-        for rd in self._dots.keys():
-            del self._couplings[(dotname, rd)]
-            del self._couplings[(rd, dotname)]
+        for dot in self._dots:
+            if dot.name == dotname:
+                del dot
+        for rd in self._dots:
+            del self._couplings[(dotname, rd.name)]
+            del self._couplings[(rd.name, dotname)]
 
     def attach_dot(self, dot):
         if dot.name is None:
-            name = dot.dot_type + str(self.num_dots_type(dot.dot_type) + 1)
-        elif dot.name in self._dots.keys():
+            dot.name = dot.dot_type + str(self.num_dots_type(dot.dot_type) + 1)
+        elif dot.name in {d.name for d in self._dots}:
             raise Exception(
                 "Dot with name {n} already present in DotSystem!".format(dot.name)
             )
-        else:
-            name = dot.name
-        self._dots[name] = dot
-        existing_dot_names = [k for k in self._dots.keys() if k != name]
+        self._dots.append(dot)
+        existing_dot_names = [d.name for d in self._dots if d.name != dot.name]
         for edn in existing_dot_names:
             self.set_coupling(dot.name, edn, 0)
 
