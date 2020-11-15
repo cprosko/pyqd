@@ -49,7 +49,7 @@ class DotSystem:
         return self._charge_range
 
     @property
-    def numdots(self):
+    def num_dots(self):
         return len(self._dots.keys())
 
     @property
@@ -149,7 +149,7 @@ class DotSystem:
     @staticmethod
     def calculate_num_states(
         max_charge,
-        numdots,
+        num_dots,
         is_floating=False,
         floating_charge=None,
     ):
@@ -161,7 +161,7 @@ class DotSystem:
         Parameters:
         -----------
         max_charge (int): Maximum charge per dot.
-        numdots (int): Number of dots/islands in the system. Must be specified if
+        num_dots (int): Number of dots/islands in the system. Must be specified if
             max_charge is given as an integer (i.e. is the same for all dots).
 
         Keyword Arguments:
@@ -176,23 +176,26 @@ class DotSystem:
         """
         if is_floating:
             # Formula from Lemma 1.1 of doi:10.2298/AADM0802222R (Joel Ratsaby) for
-            # number of ordered partitions of the integer floating_charge into numdots
+            # number of ordered partitions of the integer floating_charge into num_dots
             # partitions of maximum size max_charge.
             return sum(
                 [
                     (-1) ** (i // (max_charge + 1))
-                    * binom(numdots, i / (max_charge + 1))
-                    * binom(floating_charge - i + numdots - 1, floating_charge - i)
+                    * binom(num_dots, i / (max_charge + 1))
+                    * binom(floating_charge - i + num_dots - 1, floating_charge - i)
                     for i in np.arange(0, floating_charge + 1, max_charge + 1)
                 ]
             )
         return np.sum(
-            [binom(total_charge - 1, numdots - 1) for total_charge in range(max_charge)]
+            [
+                binom(total_charge - 1, num_dots - 1)
+                for total_charge in range(max_charge)
+            ]
         )
 
     def _refresh_state_map(self):
         # First update state mapping indices to charge states
-        single_dot_charge_states = [list(range(self._max_charge))] * self.numdots
+        single_dot_charge_states = [list(range(self._max_charge))] * self.num_dots
         unfixed_charge_states = np.array(list(product(*single_dot_charge_states)))
         if not self.is_floating:
             self._state_map = unfixed_charge_states
@@ -226,14 +229,42 @@ class DotSystem:
         # TODO: Finish this method
         coupling_operator = np.zeros((self.num_states, self.num_states))
         # 3D matrix of all possible charge differences between states
-        state_diffs = self._state_map.reshape(-1, 1, 1) - self._state_map
+        states = self._state_map
+        state_diffs = (
+            np.repeat(states, self.num_states, axis=0).reshape(
+                self.num_states, self.num_states, self.num_dots
+            )
+            - states
+        )
+        # TODO: Find a way to vectorize this algorithm
+        # Compute upper diagonal part of hopping matrix first:
+        for i in range(self.num_states):
+            for j in np.arange(i + 1, self.num_states, +1):
+                if (
+                    # Charge isn't conserved between states:
+                    sum(state_diffs[i, j] != 0)
+                    # Hopping has occurred between more than two dots/islands/leads:
+                    or state_diffs[i, j, state_diffs[i, j] != 0].shape[0] != 2
+                ):
+                    continue
+                if sum(np.abs(state_diffs[i, j])) == 2:
+                    # One electron has tunneled between these states.
+                    coupling_operator[i, j] = self._tcs_1e[
+                        state_diffs[i, j] == -1, state_diffs[i, j] == +1
+                    ]
+                if sum(np.abs(state_diffs[i, j])) == 4:
+                    # Two electrons have tunneled across two dots between these states.
+                    coupling_operator[i, j] = self._tcs_2e[
+                        state_diffs[i, j] == -2, state_diffs[i, j] == +2
+                    ]
         self._coupling_operator = coupling_operator
+        return coupling_operator
 
     def _update_coupling_matrices(self):
-        numdots = self.numdots
-        Ems = np.zeros((numdots, numdots))
-        tcs_1e = np.zeros((numdots, numdots))
-        tcs_2e = np.zeros((numdots, numdots))
+        num_dots = self.num_dots
+        Ems = np.zeros((num_dots, num_dots))
+        tcs_1e = np.zeros((num_dots, num_dots))
+        tcs_2e = np.zeros((num_dots, num_dots))
         # TODO: Find way to do this without double for loop
         for i, dot1 in self._dots:
             for j, dot2 in self._dots:
