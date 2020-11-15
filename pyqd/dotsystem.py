@@ -1,7 +1,7 @@
 """
 dotsystem:
 Module containing the main DotSystem class which manages simulations of simple
-charge-basis multi-dot simulations.
+charge-basis multi-dot simulations, neglecting spin and other degeneracies.
 """
 
 import numpy as np
@@ -9,13 +9,19 @@ from .quantumdot import QuantumDot, SuperconductingIsland, QuasiLead
 from .utilities import binom
 from itertools import product
 
-_CHARGE_PARAM_NAMES = {"is_floating", "max_charge", "floating_charge"}
+_CHARGE_PARAM_NAMES = {"is_floating", "max_charge", "floating_charge", "charge_range"}
 
-
+# TODO: Allow for this to project onto only nearby charge states
 class DotSystem:
     """Manager class for simulations of multiple dots."""
 
-    def __init__(self, is_floating=False, max_charge=None, floating_charge=None):
+    def __init__(
+        self,
+        is_floating=False,
+        max_charge=None,
+        floating_charge=None,
+        charge_range=None,
+    ):
         self._dots = dict()
         self._couplings = dict()
         self._state_map = []
@@ -23,6 +29,12 @@ class DotSystem:
         self._is_floating = is_floating
         self._floating_charge = floating_charge
         self._max_charge = max_charge
+        self._charge_range = charge_range
+        self._Ecs = None
+        self._Ems = None
+        self._tcs_1e = None
+        self._tcs_2e = None
+        self._coupling_operator = None
 
     @property
     def couplings(self):
@@ -33,12 +45,12 @@ class DotSystem:
         return self._dots
 
     @property
-    def numdots(self):
-        return len(self._dots.keys())
+    def charge_range(self):
+        return self._charge_range
 
     @property
-    def num_degenerate_dots(self):
-        return len([v for v in self._dots.values() if v.spin_degenerate is True])
+    def numdots(self):
+        return len(self._dots.keys())
 
     @property
     def is_floating(self):
@@ -47,6 +59,12 @@ class DotSystem:
     @is_floating.setter
     def is_floating(self, val):
         self._is_floating = val
+
+    @property
+    def num_states(self):
+        if self._state_map is None:
+            return None
+        return self._state_map.shape[0]
 
     def num_dots_type(self, dot_type):
         return len([v for v in self._dots.values() if v.dot_type == dot_type])
@@ -68,6 +86,8 @@ class DotSystem:
                     "floating_charge must be specified if system is made floating!"
                 )
             self._is_floating = kwargs["is_floating"]
+        if "charge_range" in kwargs.keys():
+            self._charge_range = kwargs["charge_range"]
 
     def set_coupling(self, dot1name, dot2name, amplitude=0, amplitude2e=0, Em=0):
         self._couplings[(dot1name, dot2name)] = {
@@ -80,6 +100,7 @@ class DotSystem:
             "2e": np.conjugate(amplitude2e),
             "Em": Em,
         }
+        self._update_coupling_matrices()
 
     def initialize_coupling(self, dotname):
         existing_dot_names = [d.name for d in self._dots if d.name != dotname]
@@ -108,6 +129,7 @@ class DotSystem:
         existing_dot_names = [d.name for d in self._dots if d.name != dot.name]
         for edn in existing_dot_names:
             self.set_coupling(dot.name, edn, 0)
+        self._update_dot_prop_arrays()
 
     def add_dot(self, *args, **kwargs):
         if len(args) == 1:
@@ -125,12 +147,11 @@ class DotSystem:
         self.add_dot(SuperconductingIsland(*args, **kwargs))
 
     @staticmethod
-    def num_states(
+    def calculate_num_states(
         max_charge,
         numdots,
         is_floating=False,
         floating_charge=None,
-        num_degenerate_dots=0,
     ):
         """Calculate dimension of Hilbert space for given charge boundaries.
 
@@ -153,12 +174,11 @@ class DotSystem:
         --------
         int: Dimension of the charge-state Hilbert space.
         """
-        spin_degeneracy_multiplier = 2 ** num_degenerate_dots
         if is_floating:
             # Formula from Lemma 1.1 of doi:10.2298/AADM0802222R (Joel Ratsaby) for
             # number of ordered partitions of the integer floating_charge into numdots
             # partitions of maximum size max_charge.
-            return spin_degeneracy_multiplier * sum(
+            return sum(
                 [
                     (-1) ** (i // (max_charge + 1))
                     * binom(numdots, i / (max_charge + 1))
@@ -166,7 +186,7 @@ class DotSystem:
                     for i in np.arange(0, floating_charge + 1, max_charge + 1)
                 ]
             )
-        return spin_degeneracy_multiplier * np.sum(
+        return np.sum(
             [binom(total_charge - 1, numdots - 1) for total_charge in range(max_charge)]
         )
 
@@ -184,6 +204,50 @@ class DotSystem:
         # Next, update inverse state map accordingly (mapping charge states to indices)
         num_states = self._state_map.shape[0]
         self._inverse_state_map = {self._state_map[i]: i for i in range(num_states)}
+
+    def onsite_energy(self, gates, as_matrix=False):
+        states = self._state_map
+        if len(gates) != states[0]:
+            raise Exception(
+                (
+                    "Same number of reduced gate voltages must be provided "
+                    "as there are dots!"
+                )
+            )
+        reduced_charges = states - gates[np.newaxis, ...]
+        coulomb_energy = reduced_charges ** 2 @ self._Ecs
+        level_spacings = (states % 2) @ self._level_spacings
+        mutual_couplings = reduced_charges @ self._Ems @ reduced_charges.T
+        if as_matrix:
+            return np.diag(coulomb_energy + level_spacings + mutual_couplings)
+        return coulomb_energy + level_spacings + mutual_couplings
+
+    def _update_coupling_operator(self):
+        # TODO: Finish this method
+        coupling_operator = np.zeros((self.num_states, self.num_states))
+        # 3D matrix of all possible charge differences between states
+        state_diffs = self._state_map.reshape(-1, 1, 1 - self._state_map)
+        self._coupling_operator = coupling_operator
+
+    def _update_coupling_matrices(self):
+        numdots = self.numdots
+        Ems = np.zeros((numdots, numdots))
+        tcs_1e = np.zeros((numdots, numdots))
+        tcs_2e = np.zeros((numdots, numdots))
+        # TODO: Find way to do this without double for loop
+        for i, dot1 in self._dots:
+            for j, dot2 in self._dots:
+                coupling = self._couplings[(dot1.name, dot2.name)]
+                Ems[i, j] = coupling["Em"]
+                tcs_1e[i, j] = coupling["1e"]
+                tcs_2e[i, j] = coupling["2e"]
+        self._Ems = Ems
+        self._tcs_1e = tcs_1e
+        self._tcs_2e = tcs_2e
+
+    def _update_dot_prop_arrays(self):
+        self._Ecs = np.array([d.charging_energy for d in self._dots])
+        self._level_spacings = np.array([d.level_spacing for d in self._dots])
 
 
 def main():
