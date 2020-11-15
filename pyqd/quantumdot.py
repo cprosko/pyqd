@@ -24,9 +24,9 @@ class SuperconductingIsland(QuantumDot):
 
     def __init__(self, charging_energy, gap_size, name=None):
         super().__init__(
-            name,
             charging_energy,
             gap_size,
+            name=name,
             spin_degenerate=True,
             _dot_type="superconducting",
         )

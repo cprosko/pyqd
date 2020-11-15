@@ -5,8 +5,8 @@ charge-basis multi-dot simulations, neglecting spin and other degeneracies.
 """
 
 import numpy as np
-from .quantumdot import QuantumDot, SuperconductingIsland, QuasiLead
-from .utilities import binom
+from quantumdot import QuantumDot, SuperconductingIsland, QuasiLead
+from utilities import binom
 from itertools import product
 
 _CHARGE_PARAM_NAMES = {"is_floating", "max_charge", "floating_charge", "charge_range"}
@@ -22,9 +22,9 @@ class DotSystem:
         floating_charge=None,
         charge_range=None,
     ):
-        self._dots = dict()
+        self._dots = []
         self._couplings = dict()
-        self._state_map = []
+        self._state_map = np.array([])
         self._inverse_state_map = dict()
         self._is_floating = is_floating
         self._floating_charge = floating_charge
@@ -50,7 +50,7 @@ class DotSystem:
 
     @property
     def num_dots(self):
-        return len(self._dots.keys())
+        return len(self._dots)
 
     @property
     def is_floating(self):
@@ -62,12 +62,10 @@ class DotSystem:
 
     @property
     def num_states(self):
-        if self._state_map is None:
-            return None
         return self._state_map.shape[0]
 
     def num_dots_type(self, dot_type):
-        return len([v for v in self._dots.values() if v.dot_type == dot_type])
+        return len([d for d in self._dots if d.dot_type == dot_type])
 
     def set_charge_params(self, **kwargs):
         if any([k not in _CHARGE_PARAM_NAMES for k in kwargs.keys()]):
@@ -88,24 +86,29 @@ class DotSystem:
             self._is_floating = kwargs["is_floating"]
         if "charge_range" in kwargs.keys():
             self._charge_range = kwargs["charge_range"]
+        self._refresh_state_map()
 
-    def set_coupling(self, dot1name, dot2name, amplitude=0, amplitude2e=0, Em=0):
-        self._couplings[(dot1name, dot2name)] = {
-            "1e": amplitude,
-            "2e": amplitude2e,
-            "Em": Em,
-        }
-        self._couplings[(dot2name, dot1name)] = {
-            "1e": np.conjugate(amplitude),
-            "2e": np.conjugate(amplitude2e),
-            "Em": Em,
-        }
+    def set_couplings(
+        self, dot_name, *coupled_dot_names, amplitude=0, amplitude2e=0, Em=0
+    ):
+        for cdn in coupled_dot_names:
+            self._couplings[(dot_name, cdn)] = {
+                "1e": amplitude,
+                "2e": amplitude2e,
+                "Em": Em,
+            }
+            self._couplings[(cdn, dot_name)] = {
+                "1e": np.conjugate(amplitude),
+                "2e": np.conjugate(amplitude2e),
+                "Em": Em,
+            }
+        print(self._couplings)
         self._update_coupling_matrices()
 
     def initialize_coupling(self, dotname):
         existing_dot_names = [d.name for d in self._dots if d.name != dotname]
-        for edn in existing_dot_names:
-            self.set_coupling(dotname, edn)
+        print("edn: " + str(existing_dot_names))
+        self.set_couplings(dotname, *existing_dot_names)
 
     def remove_coupling(self, dot1name, dot2name):
         self.set_coupling(dot1name, dot2name, 0)
@@ -114,9 +117,8 @@ class DotSystem:
         for dot in self._dots:
             if dot.name == dotname:
                 del dot
-        for rd in self._dots:
-            del self._couplings[(dotname, rd.name)]
-            del self._couplings[(rd.name, dotname)]
+            else:
+                self.remove_coupling(dotname, dot.name)
 
     def attach_dot(self, dot):
         if dot.name is None:
@@ -126,10 +128,9 @@ class DotSystem:
                 "Dot with name {n} already present in DotSystem!".format(dot.name)
             )
         self._dots.append(dot)
-        existing_dot_names = [d.name for d in self._dots if d.name != dot.name]
-        for edn in existing_dot_names:
-            self.set_coupling(dot.name, edn, 0)
+        self.initialize_coupling(dot.name)
         self._update_dot_prop_arrays()
+        self._refresh_state_map()
 
     def add_dot(self, *args, **kwargs):
         if len(args) == 1:
@@ -143,8 +144,8 @@ class DotSystem:
     def add_lead(self, name=None):
         self.add_dot(QuasiLead(name=name))
 
-    def add_island(self, *args, **kwargs):
-        self.add_dot(SuperconductingIsland(*args, **kwargs))
+    def add_island(self, *args, name=None):
+        self.add_dot(SuperconductingIsland(*args, name=name))
 
     @staticmethod
     def calculate_num_states(
@@ -195,7 +196,7 @@ class DotSystem:
 
     def _refresh_state_map(self):
         # First update state mapping indices to charge states
-        single_dot_charge_states = [list(range(self._max_charge))] * self.num_dots
+        single_dot_charge_states = [list(range(self._max_charge + 1))] * self.num_dots
         unfixed_charge_states = np.array(list(product(*single_dot_charge_states)))
         if not self.is_floating:
             self._state_map = unfixed_charge_states
@@ -206,7 +207,9 @@ class DotSystem:
             self._state_map = fixed_charge_states
         # Next, update inverse state map accordingly (mapping charge states to indices)
         num_states = self._state_map.shape[0]
-        self._inverse_state_map = {self._state_map[i]: i for i in range(num_states)}
+        self._inverse_state_map = {
+            tuple(self._state_map[i]): i for i in range(num_states)
+        }
 
     def onsite_energy(self, gates, as_matrix=False):
         states = self._state_map
@@ -266,8 +269,10 @@ class DotSystem:
         tcs_1e = np.zeros((num_dots, num_dots))
         tcs_2e = np.zeros((num_dots, num_dots))
         # TODO: Find way to do this without double for loop
-        for i, dot1 in self._dots:
-            for j, dot2 in self._dots:
+        for i, dot1 in enumerate(self._dots):
+            for j, dot2 in enumerate(self._dots):
+                if dot1.name == dot2.name:
+                    continue
                 coupling = self._couplings[(dot1.name, dot2.name)]
                 Ems[i, j] = coupling["Em"]
                 tcs_1e[i, j] = coupling["1e"]
@@ -282,7 +287,14 @@ class DotSystem:
 
 
 def main():
-    print("Nothing to do here yet!")
+    dot_system = DotSystem(is_floating=True, max_charge=0, floating_charge=0)
+    dot_system.add_dot(150, 10, name="cooldot")
+    dot_system.add_dot(300, 50, name="lamedot")
+    dot_system.add_island(100, 50, name="thisisanisland")
+    dot_system.add_lead(name="alead")
+    print(dot_system._state_map)
+    print(dot_system.num_dots)
+    print(dot_system.num_states)
 
 
 if __name__ == "__main__":
