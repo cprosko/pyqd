@@ -69,42 +69,40 @@ class DotSystem:
         self.attach_dot(dot)
 
     @staticmethod
-    def num_states(max_charge, is_floating=False, numdots=None, floating_charge=None):
-        if is_iterable(max_charge):
-            if numdots is not None:
-                raise Exception(
-                    (
-                        "Number of dots is already specified by "
-                        "length of max_charge iterable!"
-                    )
-                )
-            if not is_floating:
-                return np.prod(max_charge)
-            if floating_charge is None:
-                raise Exception(
-                    (
-                        "Total charge must be provided if a floating"
-                        " system with charge bounds is specified!"
-                    )
-                )
-            if floating_charge > sum(max_charge):
-                raise Exception(
-                    (
-                        "Total floating charge cannot exceed sum of"
-                        " maximum charges for each dot!"
-                    )
-                )
-            sorted_max_charges = np.sort(max_charge)
-            return 0  # TODO: Finish this
-        elif numdots is None:
-            raise Exception(
-                (
-                    "If total charge is specified as integer, numdots"
-                    + "must also be specified!"
-                )
-            )
+    def num_states(max_charge, numdots, is_floating=False, floating_charge=None):
+        """Calculate dimension of Hilbert space for given charge boundaries.
+
+        Assumes each island/dot is allowed to have a minimum charge of 0 electrons.
+        No orbital or spin degeneracies are considered.
+
+        Parameters:
+        -----------
+        max_charge (int): Maximum charge per dot.
+        numdots (int): Number of dots/islands in the system. Must be specified if
+            max_charge is given as an integer (i.e. is the same for all dots).
+
+        Keyword Arguments:
+        ------------------
+        is_floating (bool): Whether or not total charge is fixed.
+        floating_charge (int): Total number of charges distributed across the dots if
+            they are floating. Should only be specified if is_floating is True.
+
+        Returns:
+        --------
+        int: Dimension of the charge-state Hilbert space.
+        """
         if is_floating:
-            return binom(max_charge - 1, numdots - 1)
+            # Formula from Lemma 1.1 of doi:10.2298/AADM0802222R (Joel Ratsaby) for
+            # number of ordered partitions of the integer floating_charge into numdots
+            # partitions of maximum size max_charge.
+            return sum(
+                [
+                    (-1) ** (i / (max_charge + 1))
+                    * binom(numdots, i / (max_charge + 1))
+                    * binom(floating_charge - i + numdots - 1, floating_charge - i)
+                    for i in np.arange(0, floating_charge + 1, max_charge + 1)
+                ]
+            )
         return np.sum(
             [binom(total_charge - 1, numdots - 1) for total_charge in range(max_charge)]
         )
