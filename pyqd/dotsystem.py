@@ -226,7 +226,7 @@ class DotSystem:
         # TODO: Finish this method
         coupling_operator = np.zeros((self.num_states, self.num_states))
         # 3D matrix of all possible charge differences between states
-        state_diffs = self._state_map.reshape(-1, 1, 1 - self._state_map)
+        state_diffs = self._state_map.reshape(-1, 1, 1) - self._state_map
         self._coupling_operator = coupling_operator
 
     def _update_coupling_matrices(self):
