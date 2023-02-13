@@ -5,6 +5,9 @@ charge-basis multi-dot simulations, neglecting spin and other degeneracies.
 """
 
 import numpy as np
+from numbers import Number
+
+from dotsystem import QuantumDot
 
 
 class DotSystem:
@@ -12,17 +15,70 @@ class DotSystem:
 
     def __init__(
         self,
-        is_floating=False,
+        dots=None,
         max_charge=None,
         floating_charge=None,
     ):
         self._dots = dict()
+        if dots is not None:
+            for dot in dots:
+                self.add_dot(dot)
         self._couplings = dict()
-        self._state_map = np.array([])
-        self._inverse_state_map = dict()
-        self._is_floating = is_floating
+        self._coupling_matrix = None
+        self._onsite_hamiltonian = None
+        self._state_map = None  # Becomes an array of state labels
+        self._inverse_state_map = None  # Becomes a dict of state indices from labels
         self._floating_charge = floating_charge
         self._max_charge = max_charge
+        self._dots_changed = False
+        self._params_changed = False
+
+    @property
+    def onsite_hamiltonian(self):
+        if self._dots_changed or self._params_changed:
+            self._update_onsite_hamiltonian()
+        return self._onsite_hamiltonian
+
+    @property
+    def coupling_matrix(self):
+        if self._unimplemented_couplings:
+            self._update_coupling_matrix()
+        return self._coupling_matrix
+
+    def add_dot(self, dot: QuantumDot, overwrite_dots=False) -> None:
+        if dot.name in self._dots.keys() and not overwrite_dots:
+            raise Exception(f"Dot named '{dot.name}' already exists in this DotSystem!")
+        self._dots.update({dot.name: dot})
+
+    def add_coupling(self, name1: str, name2: str, coupling: Number):
+        coupling_is_new = {name1, name2} in self._couplings
+        self._couplings[{name1, name2}:coupling]
+        if coupling_is_new or (
+            not coupling_is_new and self._couplings[{name1, name2}] != coupling
+        ):
+            self._unimplemented_couplings = True
+
+    def remove_coupling(self, name1: str, name2: str):
+        if {name1, name2} in self._couplings:
+            del self._couplings[{name1, name2}]
+        self._unimplemented_couplings = True
+
+    def onsite_energy(self, state):
+        # TODO: Write this function
+        pass
+
+    def _update_coupling_matrix(self):
+        # TODO Write this function
+        self._coupling_matrix = None
+        self._unimplemented_couplings = False
+        pass
+
+    def _update_onsite_hamiltonian(self):
+        # TODO Write this function
+        self._onsite_hamiltonian = None
+        self._dots_changed = False
+        self._params_changed = False
+        pass
 
 
 def main():
