@@ -54,8 +54,12 @@ class QuantumDot:
         -------
         energies : float or numpy.ndarray[float]
         """
-        # TODO: Finish writing this function
-        pass
+        num_filled_modes, extra_electrons = np.divmod(states, self.degeneracy)
+        energies = self.level_spacing * (
+            self.degeneracy * num_filled_modes * (num_filled_modes + 1) / 2
+            + (num_filled_modes + 1) * extra_electrons
+        )
+        return energies
 
     def ground_state_energies(self, states, voltages):
         """Ground-state energies of sequence of charge states of the QuantumDot.
