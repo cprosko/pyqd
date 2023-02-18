@@ -3,6 +3,8 @@
 
 import numpy as np
 
+from utilities import ensure_iterable
+
 
 class QuantumDot:
     """Class containing properties and couplings for a single quantum dot."""
@@ -34,8 +36,12 @@ class QuantumDot:
         -------
         energies : float or numpy.ndarray[float]
         """
-        # TODO: Finish writing this function
-        pass
+        states, voltages = ensure_iterable(states, voltages)
+        single_voltage = voltages.size == 1
+        energies = self.charging_energy * np.subtract.outer(states, voltages) ** 2
+        if single_voltage:
+            energies = energies.flatten()
+        return energies
 
     def mode_energies(self, states):
         """Ground state mode/orbital energies for given states and the dot's degeneracy.
