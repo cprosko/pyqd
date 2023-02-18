@@ -1,6 +1,9 @@
 """Helper functions for the pyqd package."""
 
 
+import numpy as np
+
+
 def is_iterable(obj):
     """Returns whether obj is iterable or not."""
     try:
@@ -8,6 +11,11 @@ def is_iterable(obj):
         return True
     except TypeError:
         return False
+
+
+def ensure_iterable(*args):
+    """Get iterable version of arguments as numpy.ndarrays"""
+    return tuple(np.array([arg]).flatten() for arg in args)
 
 
 def binom(n, k):
