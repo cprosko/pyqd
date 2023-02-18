@@ -35,5 +35,5 @@ class SuperconductingIsland(QuantumDot):
 class QuasiLead(QuantumDot):
     """Class for naively modeling leads as 0-charging-energy dots."""
 
-    def __init__(self, name=None):
-        super().__init__(0, 0, name=name, degeneracy=1, _dot_type="lead")
+    def __init__(self, name=None, gap_size=0):
+        super().__init__(0, gap_size, name=name, degeneracy=1, _dot_type="lead")
