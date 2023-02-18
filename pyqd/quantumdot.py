@@ -54,6 +54,7 @@ class QuantumDot:
         -------
         energies : float or numpy.ndarray[float]
         """
+        states = ensure_iterable(states)
         num_filled_modes, extra_electrons = np.divmod(states, self.degeneracy)
         energies = self.level_spacing * (
             self.degeneracy * num_filled_modes * (num_filled_modes + 1) / 2
