@@ -78,8 +78,14 @@ class QuantumDot:
         -------
         energies : float or numpy.ndarray[float]
         """
-        # TODO: Finish writing this function
-        pass
+        coulomb_energies = self.coulomb_energies(states, voltages)
+        mode_energies = self.mode_energies(states)
+        single_voltage = ensure_iterable(voltages).size == 1
+        if single_voltage:
+            energies = coulomb_energies + mode_energies
+        else:
+            energies = coulomb_energies + mode_energies[:, np.newaxis]
+        return energies
 
 
 class SuperconductingIsland(QuantumDot):
