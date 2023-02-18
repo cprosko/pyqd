@@ -15,13 +15,16 @@ class QuantumDot:
         level_spacing,
         name=None,
         degeneracy=1,
-        _dot_type="dot",
     ):
         self.name = name
         self.charging_energy = charging_energy
         self.level_spacing = level_spacing
         self.degeneracy = degeneracy
-        self.dot_type = _dot_type
+        self._dot_type = "semiconducting"
+
+    @property
+    def dot_type(self):
+        return self._dot_type
 
     def coulomb_energies(self, states, voltages):
         """Coulomb energies for given states and voltages.
@@ -88,12 +91,13 @@ class SuperconductingIsland(QuantumDot):
             gap_size,
             name=name,
             degeneracy=degeneracy,
-            _dot_type="superconducting",
         )
+        self._dot_type = "superconducting"
 
 
 class QuasiLead(QuantumDot):
     """Class for naively modeling leads as 0-charging-energy dots."""
 
     def __init__(self, name=None, gap_size=0):
-        super().__init__(0, gap_size, name=name, degeneracy=1, _dot_type="lead")
+        super().__init__(0, gap_size, name=name, degeneracy=1)
+        self._dot_type = "lead"
