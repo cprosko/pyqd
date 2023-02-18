@@ -91,14 +91,31 @@ class QuantumDot:
 class SuperconductingIsland(QuantumDot):
     """Class containing properties of a superconducting charge island."""
 
-    def __init__(self, charging_energy, gap_size, name=None, degeneracy=1):
+    def __init__(self, charging_energy, gap, name=None, degeneracy=1):
         super().__init__(
             charging_energy,
-            gap_size,
+            gap,
             name=name,
             degeneracy=degeneracy,
         )
         self._dot_type = "superconducting"
+
+    @property
+    def gap(self):
+        return self.level_spacing
+
+    def mode_energies(self, states):
+        """Ground state quasiparticle energies for the superconducting island.
+
+        Parameters
+        ----------
+        states : int or numpy.ndarray[int]
+
+        Returns
+        -------
+        energies : float or numpy.ndarray[float]
+        """
+        return self.level_spacing * np.mod(states, 2)
 
 
 class QuasiLead(QuantumDot):
