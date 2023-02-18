@@ -63,8 +63,25 @@ class DotSystem:
             del self._couplings[{name1, name2}]
         self._unimplemented_couplings = True
 
-    def onsite_energy(self, state):
-        # TODO: Write this function
+    def onsite_energy(self, states):
+        """Calculate the on-site energy of basis states of the DotSystem.
+
+        Parameters
+        ----------
+        states (dict[numpy.ndarray[int] or int]):
+            State or sequence of states given as a dictionary
+            of sequences of states for each QuantumDot in the system (including
+            QuasiLeads and SuperconductingIslands) with its 'name' property as the key.
+            If iterables are given for each dictionary entry, they must be the same
+            length as 'states' specifies states of the entire DotSystem and not only
+            individual dots.
+
+        Returns
+        -------
+        numpy.ndarray[float] or complex:
+            One-dimensional array of energies or an energy for each input state
+            ignoring interactions.
+        """
         pass
 
     def _update_coupling_matrix(self):
