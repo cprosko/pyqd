@@ -1,6 +1,9 @@
 """Classes containing information about quantum dots and other islands."""
 
 
+import numpy as np
+
+
 class QuantumDot:
     """Class containing properties and couplings for a single quantum dot."""
 
@@ -17,6 +20,52 @@ class QuantumDot:
         self.level_spacing = level_spacing
         self.degeneracy = degeneracy
         self.dot_type = _dot_type
+
+    def coulomb_energies(self, states, voltages):
+        """Coulomb energies for given states and voltages.
+
+        Parameters
+        ----------
+        states : int or numpy.ndarray[int]
+        voltages : float or numpy.ndarray[float]
+            Reduced gate voltages to calculate energies at.
+
+        Returns
+        -------
+        energies : float or numpy.ndarray[float]
+        """
+        # TODO: Finish writing this function
+        pass
+
+    def mode_energies(self, states):
+        """Ground state mode/orbital energies for given states and the dot's degeneracy.
+
+        Parameters
+        ----------
+        states : int or numpy.ndarray[int]
+
+        Returns
+        -------
+        energies : float or numpy.ndarray[float]
+        """
+        # TODO: Finish writing this function
+        pass
+
+    def ground_state_energies(self, states, voltages):
+        """Ground-state energies of sequence of charge states of the QuantumDot.
+
+        Parameters
+        ----------
+        states : int or numpy.ndarray[int]
+        voltages : float or numpy.ndarray[float]
+            Reduced gate voltages to calculate energies at.
+
+        Returns
+        -------
+        energies : float or numpy.ndarray[float]
+        """
+        # TODO: Finish writing this function
+        pass
 
 
 class SuperconductingIsland(QuantumDot):
