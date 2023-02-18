@@ -63,6 +63,27 @@ class DotSystem:
             del self._couplings[{name1, name2}]
         self._unimplemented_couplings = True
 
+    def decoupled_energies(self, states=None, voltages=None):
+        """Calculate the energies of dots in DotSystem assuming they are isolated.
+
+        Parameters
+        ----------
+        states : dict[numpy.ndarray[int] or int]
+            State or sequence of states given as a dictionary
+            of sequences of states for each QuantumDot in the system (including
+            QuasiLeads and SuperconductingIslands) with its 'name' property as the key.
+            If iterables are given for each dictionary entry, they must be the same
+            length as 'states' specifies states of the entire DotSystem and not only
+            individual dots.
+
+        Returns
+        -------
+        energies : numpy.ndarray[float] or complex
+            One-dimensional array of energies or an energy for each input state
+            ignoring interactions including mutual capacitance.
+        """
+        pass
+
     def onsite_energies(self, states):
         """Calculate the on-site energy of basis states of the DotSystem.
 
@@ -80,7 +101,7 @@ class DotSystem:
         -------
         energies : numpy.ndarray[float] or complex
             One-dimensional array of energies or an energy for each input state
-            ignoring interactions.
+            ignoring tunnel couplings.
         """
         pass
 
