@@ -26,6 +26,7 @@ import matplotlib.pyplot as plt
 import warnings
 import time
 
+from tqdm import tqdm
 from scipy.linalg import eigh
 from scipy.sparse.linalg import eigsh
 from itertools import product, combinations, permutations
@@ -815,7 +816,7 @@ class DotSystem:
         gs = {k: (v if np.isscalar(v) else v[0]) for k, v in gates.items()}
         h = self.get_hamiltonian(N, gs)
         isDiag = isDiagonal(h)
-        for i, g0 in enumerate(gates[probeName]):
+        for i, g0 in enumerate(tqdm(gates[probeName])):
             ti1 = time.perf_counter()
             t2 = 0
             t3 = 0
