@@ -3,4 +3,5 @@ A package for simulating arbitrary quantum dot systems with or without leads usi
 
 ## Known issues:
 Parity dependent tunneling (the u option in DotSystem.add_dot()) does not work correctly for normal
-dots currently. Adding two-e tunnel couplings also does not yet function.
+dots currently. Adding two-e tunnel couplings also does not yet function. cp_stability_diagram 
+appears to produce only the correct quantum capacitance when flipAxes=True, but then axes are incorrect.
