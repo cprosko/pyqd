@@ -971,14 +971,17 @@ class DotSystem:
             #     + leverArms[0]*gradCoupled @ detProbed
             #     + leverArms[0]*gradProbed @ detCoupled
             # )
-            if not flipAxes:
-                cp = cp.T
             if removeJumps:
                 print(np.std(cp))
                 cp[cp - np.mean(cp) > 2 * np.std(cp)] = 0
             fig, axs = plt.subplots(2, 2, sharex=True, sharey=True)
             ax = axs[0, 0]
-            im = ax.pcolormesh(xAxis, yAxis, cp, **plotparams)
+            im = ax.pcolormesh(
+                xAxis[:-1] if flipAxes else xAxis,
+                yAxis if flipAxes else yAxis[:-1],
+                cp.T if flipAxes else cp,
+                **plotparams
+            )
             fig.colorbar(im, ax=ax, label="C_p")
             ax.set_xlabel(gvar[0] + " reduced voltage")
             ax.set_ylabel(gvar[1] + " reduced voltage")
@@ -1028,7 +1031,7 @@ def main():
     system.add_coupling(60, 20, ["dot0", "dot1"], twoe=False)
     print(system)
     system.get_states(N)
-    npoints = 200
+    npoints = 50
     gates = {"dot0": np.linspace(0, N, npoints), "dot1": np.linspace(0, N, npoints)}
     leverArms = [0.2, 0.05]
     system.cp_stability_diagram(
