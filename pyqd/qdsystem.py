@@ -403,7 +403,7 @@ class DotSystem:
         self.__sys["t"] = symmetrize(self.__sys["t"])
         self.__isFinalized = True
 
-    def get_states(self, N):
+    def get_states(self, N, verbose=None):
         """Generate all possible charge/orbital/spin states for given total charge N.
 
         Parameters:
@@ -419,6 +419,8 @@ class DotSystem:
         """
         if not self.__isFinalized:
             self.finalize()
+        if verbose is None:
+            verbose = self.verbose
         sys = self.__sys
         nObjs = self.__ndotseff
         areLeads = self.nleads > 0
@@ -514,7 +516,7 @@ class DotSystem:
 
         ti = time.perf_counter()
         self.states[N] = np.array([chgs for chgs in partitions(nMax, nObjs, N)])
-        if self.verbose:
+        if verbose:
             print(
                 "Time to generate "
                 + str(len(self.states[N][:, 0, 0]))
@@ -741,6 +743,7 @@ class DotSystem:
         removeJumps=False,
         flipAxes=False,
         contoured=False,
+        verbose=None,
         **plotparams
     ):
         """Generate and plot parametric capacitance stability diagram.
@@ -780,6 +783,8 @@ class DotSystem:
         """
         if not self.__isFinalized:
             self.finalize()
+        if verbose is None:
+            verbose = self.verbose
         # Generate system states if necessary
         self.__choose_states(N)
         dim = self.dimension(N)
@@ -884,7 +889,7 @@ class DotSystem:
                     ns[i, j, 1] = v0.T @ (v0.T * numOp2).T
                     t4 += time.perf_counter() - ti4
 
-            if self.verbose:
+            if verbose:
                 print(
                     "Finished row {row}/{totRows} in: {t}s.".format(
                         row=i + 1,
