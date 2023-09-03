@@ -1,7 +1,10 @@
 # pyqd
-A package for simulating arbitrary quantum dot systems with or without leads using the underlying DotSystem class. Allows for adding degeneracy to normal and superconducting islands, implementing parity dependent tunneling, spin effects, and non-zero temperature.
+A package for simulating arbitrary quantum dot systems with or without leads. Systems can be simulated purely classically as charge islands or quantum mechanically using various models, including models for superconducting charge islands.
 
-## Known issues:
-Parity dependent tunneling (the u option in DotSystem.add_dot()) does not work correctly for normal
-dots currently. Adding two-e tunnel couplings also does not yet function. cp_stability_diagram 
-appears to produce only the correct quantum capacitance when flipAxes=True, but then axes are incorrect.
+This branch is an overhaul of the original package, with the goal of restructuring the code to be more clear, fixing known bugs, and introducing additional solver models.
+
+## TODOs:
+
+- Implement classical eigenvalue sorter for arbitrary systems of classical charge islands.
+- Implement fermionic solver for arbitrary sets of fermionic quantum dots.
+- Implement semiclassical solver for semiconducting and superconducting quantum dots in a charge basis.
