@@ -45,6 +45,11 @@ class ChargeSystemBase:
         padded_summands = [list(s) + [0] * (num_dots - len(s)) for s in trunc_summands]
         states = [p for c in padded_summands for p in permutations(c)]
         states = list(set(states))
+        self.__charge_states = states
         return states
+
+    def solve_system(self):
+        self.__charge_states  # Added to prevent warning of unused variables
+        raise Exception("Should be overridden by inheriting class!")
 
     # TODO: Finish this class
