@@ -4,7 +4,12 @@ from ..islands import ChargeIsland
 from ..utils import partitions
 
 
-class ChargeSystemBase:
+class IslandArray:
+    # TODO: Implement this class as ChargeIsland instances with properties made into numpy arrays
+    pass
+
+
+class ChargeSystemBase(IslandArray):
     def __init__(
         self,
         islands: Iterable[ChargeIsland] or ChargeIsland,
@@ -35,6 +40,8 @@ class ChargeSystemBase:
     def num_dots(self):
         return len(self.islands)
 
+    # TODO: Add lazy evaluation of arrays of dot properties using IslandArray class
+
     def charge_states(self, total_charge=None, num_dots=None):
         if total_charge is None:
             total_charge = self.total_charge
@@ -47,6 +54,14 @@ class ChargeSystemBase:
         states = list(set(states))
         self.__charge_states = states
         return states
+
+    def onsite_energies(self, ngs):
+        if len(ngs) != self.num_dots:
+            raise Exception(
+                f"len(ngs)={len(ngs)}."
+                "A reduced gate charge for all dots in the system must be specified!"
+            )
+        # TODO: implement vectorized method for calculating charging energies
 
     def solve_system(self):
         self.__charge_states  # Added to prevent warning of unused variables
