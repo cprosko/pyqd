@@ -7,3 +7,11 @@ class CapacitanceSystem(ChargeSystemBase):
 
     def __init__(self, *args, **kwargs):
         super.__init__(*args, **kwargs)
+
+    @property
+    def basis_states(self):
+        return self.charge_states
+
+    def solve_system(self):
+        states = self.charge_states
+        # TODO: Finish this function
