@@ -1,12 +1,12 @@
 import numpy as np
 
-from itertools import permutations
+from itertools import permutations, product
 from typing import Iterable
 from ..islands import Island
 from ..utils import partitions
 
 
-class ChargeSystemBase:
+class ChargeSystem:
     def __init__(
         self,
         islands: Iterable[Island] or Island,
@@ -51,26 +51,33 @@ class ChargeSystemBase:
 
     # TODO: Add lazy evaluation of arrays of dot properties using IslandArray class
 
-    def charge_states(self, total_charge=None, num_dots=None):
+    def charge_states(self, total_charge=None, num_dots=None, floating=None):
         if total_charge is None:
             total_charge = self.total_charge
         if num_dots is None:
             num_dots = self.num_dots
-        summands = partitions(total_charge, 1)
-        trunc_summands = tuple(s for s in summands if len(s) <= num_dots)
-        padded_summands = [list(s) + [0] * (num_dots - len(s)) for s in trunc_summands]
-        states = [p for c in padded_summands for p in permutations(c)]
-        states = np.array(list(set(states)))
+        if floating is None:
+            floating = self.floating
+        if floating:
+            summands = partitions(total_charge, 1)
+            trunc_summands = tuple(s for s in summands if len(s) <= num_dots)
+            padded_summands = [
+                list(s) + [0] * (num_dots - len(s)) for s in trunc_summands
+            ]
+            states = [p for c in padded_summands for p in permutations(c)]
+            states = np.array(list(set(states)))
+        else:
+            states = np.array(list(product(range(total_charge + 1), repeat=num_dots)))
         self.__charge_states = states
         return states
 
-    def coulomb_energies(self, ngs):
+    def coulomb_energies(self, ngs, states=None):
         if len(ngs) != self.num_dots:
             raise Exception(
                 f"len(ngs)={len(ngs)}."
                 "A reduced gate charge for all dots in the system must be specified!"
             )
-        states = self.charge_states()
+        states = self.charge_states() if states is None else states
         energies = np.zeros((len(states)))
         # Nested loop requiring iterations equal to num_dots * (charge space dimension)
         for i, charge_state in enumerate(states):
@@ -79,8 +86,9 @@ class ChargeSystemBase:
             energies[i] = coulomb_en + super_en
         return energies
 
-    def solve_system(self):
-        self.__charge_states  # Added to prevent warning of unused variables
-        raise Exception("Should be overridden by inheriting class!")
-
-    # TODO: Finish this class
+    def solve_system(self, ngs):
+        # TODO: Note in docstring this can/should be overwritten
+        states = self.charge_states()
+        energies = self.coulomb_energies(ngs, states)
+        sorted_inds = np.argsort(energies)
+        return states[sorted_inds], energies[sorted_inds]
